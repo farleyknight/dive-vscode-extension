@@ -40,6 +40,23 @@ jobs:
           # Set the generated vsix file path as an output
           echo "vsix_path=${FILENAME}" >> $GITHUB_OUTPUT
 
+      - name: Generate Release Notes
+        id: generate_notes
+        run: |
+          # Fetch all tags to ensure we find the previous one
+          git fetch --tags
+          # Get the latest tag
+          LATEST_TAG=${{ github.ref_name }}
+          # Find the previous tag (handle case where it's the first tag)
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${LATEST_TAG}^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          echo "Previous tag: ${PREVIOUS_TAG}" # Log previous tag for debugging
+          # Generate the notes
+          NOTES=$(git log ${PREVIOUS_TAG}..${LATEST_TAG} --pretty=format:"- %s (%h)" --no-merges)
+          # Handle multi-line notes for GITHUB_OUTPUT
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "${NOTES}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         id: create_release
         uses: actions/create-release@v1.1.4
@@ -48,6 +65,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }} # Use the tag that triggered the workflow
           release_name: Release ${{ github.ref_name }}
+          body: ${{ steps.generate_notes.outputs.NOTES }} # Use the generated notes
           draft: false
           prerelease: false
 

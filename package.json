@@ -1,0 +1,140 @@
+{
+	"name": "dive",
+	"publisher": "farleyknight",
+	"displayName": "DIVE",
+	"description": "Chat extension that can generate diagrams",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/farleyknight/dive-vscode-extension"
+	},
+	"version": "1.0.0",
+	"engines": {
+		"vscode": "^1.95.0"
+	},
+	"categories": [
+		"AI",
+		"Chat",
+		"Visualization"
+	],
+	"activationEvents": [
+		"onChatParticipant:dive.diagram"
+	],
+	"contributes": {
+		"chatParticipants": [
+			{
+				"id": "dive.diagram",
+				"fullName": "DIVE",
+				"name": "diagram",
+				"description": "What diagram can I draw for you?",
+				"isSticky": true,
+				"commands": [
+					{
+						"name": "simpleUML",
+						"description": "Generate a diagram from the code in the current editor"
+					},
+					{
+						"name": "relationUML",
+						"description": "Show the current class/object and its related objects with connections (Advanced UML)"
+					},
+					{
+						"name": "sequence",
+						"description": "Generate a sequence diagram from the current file's code"
+					}
+				],
+				"disambiguation": [
+					{
+						"category": "diagram",
+						"description": "The user wants to learn a specific computer science topic in an informal way, potentially with diagrams.",
+						"examples": [
+							"Teach me C++ pointers using metaphors",
+							"Explain to me what is a linked list in a simple way",
+							"Can you explain to me what is a function in programming?"
+						]
+					}
+				]
+			}
+		],
+		"languageModelTools": [
+			{
+				"name": "dive_getCodeContext",
+				"modelDescription": "Retrieves code from the user's active text editor. If the user has selected text, it returns the selection; otherwise, it returns the entire file content.",
+				"displayName": "Get Code Context",
+				"toolReferenceName": "getCodeContext",
+				"canBeReferencedInPrompt": false,
+				"inputSchema": {
+					"type": "object",
+					"properties": {}
+				}
+			},
+			{
+				"name": "dive_renderDiagram",
+				"modelDescription": "Takes a string containing Mermaid syntax and displays it as a diagram in a dedicated panel.",
+				"displayName": "Render Mermaid Diagram",
+				"toolReferenceName": "renderDiagram",
+				"canBeReferencedInPrompt": false,
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"mermaidDiagram": {
+							"type": "string",
+							"description": "The Mermaid diagram syntax to render."
+						}
+					},
+					"required": [
+						"mermaidDiagram"
+					]
+				}
+			}
+		],
+		"commands": [
+			{
+				"command": "diagram.namesInEditor",
+				"title": "Use Diagram Names in Editor"
+			},
+			{
+				"command": "diagram.clearChat",
+				"title": "Clear Chat History"
+			},
+			{
+				"command": "diagram.simpleUML",
+				"title": "Generate Simple UML Diagram from Current File"
+			},
+			{
+				"command": "diagram.relationUML",
+				"title": "Show Object Connections (Advanced UML)"
+			},
+			{
+				"command": "diagram.saveAs",
+				"title": "Save Diagram As"
+			},
+			{
+				"command": "diagram.sequence",
+				"title": "Generate Sequence Diagram from Current File"
+			}
+		]
+	},
+	"main": "./out/extension.js",
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"lint": "eslint",
+		"watch": "tsc -watch -p ./"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@mermaid-js/mermaid-cli": "^11.4.2",
+		"@stylistic/eslint-plugin": "^4.2.0",
+		"@types/dompurify": "^3.0.5",
+		"@types/jsdom": "^21.1.7",
+		"@types/node": "^22.15.3",
+		"@types/vscode": "^1.99.1",
+		"@vscode/chat-extension-utils": "^0.0.0-alpha.5",
+		"@vscode/prompt-tsx": "^0.4.0-alpha.4",
+		"dompurify": "^3.2.5",
+		"eslint": "^9.25.1",
+		"jsdom": "^26.1.0",
+		"mermaid": "^11.6.0",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "^8.31.1"
+	}
+}

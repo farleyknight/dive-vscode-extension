@@ -357,89 +357,127 @@ async function createAndShowDiagramWebview(
     exportFileNameBase?: string // Optional base filename for export
 ): Promise<boolean> { // Returns true if successful, false otherwise
 
-    // 1. Validate Syntax first
-    // We show the syntax in the chat *before* validation in the calling handlers,
-    // so the user sees it even if validation fails.
+    // Validate the syntax first
     const isValid = await validateMermaidSyntax(mermaidSyntax, stream, logger, commandName);
     if (!isValid) {
-        return false; // Validation failed, stop here
+        // Validation failed, message already sent by validator
+        return false;
     }
 
-    // 2. Create Panel
     const panel = vscode.window.createWebviewPanel(
         panelId,
         panelTitle,
-        vscode.ViewColumn.Beside,
+        vscode.ViewColumn.Beside, // Show in a side column
         {
-            enableScripts: true,
-            retainContextWhenHidden: true // Keep context when hidden
+            enableScripts: true, // IMPORTANT: Allow scripts to run
+            retainContextWhenHidden: true // Keep state when tab is not visible
         }
     );
-    // IMPORTANT: Add the panel to subscriptions *immediately* after creation
-    // to ensure it's disposed correctly even if setup fails later.
-    extensionContext.subscriptions.push(panel);
 
-    // 3. Set HTML Content
-    // Define themes - consider moving this to a constant if used elsewhere
-    const themes = ['default', 'neutral', 'dark', 'forest'];
-    const defaultTheme = 'default'; // Choose a default theme
-    panel.webview.html = getMermaidWebviewHtml(mermaidSyntax, defaultTheme);
+    // Initial default theme
+    let currentTheme = 'dark'; // Match default in template
 
-    // 4. Handle Export Messages
-    const exportDisposable = panel.webview.onDidReceiveMessage(
+    // Function to update webview content
+    const updateWebviewContent = (theme: string) => {
+        panel.webview.html = getMermaidWebviewHtml(mermaidSyntax, theme);
+    };
+
+    // Set initial content
+    updateWebviewContent(currentTheme);
+
+    // Add the "Save As..." button to the chat (for MMD/MD)
+    stream.button({
+        command: 'diagram.saveAs', // Use the registered command
+        arguments: [mermaidSyntax, exportFileNameBase || commandName], // Pass syntax and default filename
+        title: vscode.l10n.t('Save Diagram As (.mmd, .md)...')
+    });
+
+    // Listen for messages from the webview
+    panel.webview.onDidReceiveMessage(
         async message => {
-            logger.logUsage('webviewMessage', { command: message.command }); // Log received command
-            if (message.command === 'exportDiagram') { // Keep existing logic for now, though maybe unused
-                // We need to call the existing 'diagram.saveAs' command
-                // We can get the syntax from the message
-                try {
-                    const defaultFileName = exportFileNameBase || 'diagram'; // Use provided base or default
-                    await vscode.commands.executeCommand('diagram.saveAs', message.syntax, defaultFileName);
-                    logger.logUsage('webviewExport', { format: message.format, status: 'triggered' });
-                } catch (err: any) {
-                    logger.logError(err, { event: 'webviewExportError', command: message.command, format: message.format });
-                    vscode.window.showErrorMessage(`Failed to trigger diagram save: ${err.message}`);
-                }
-            } else if (message.command === 'saveDiagram') { // Add handler for the new command
-                // Trigger the existing saveAs command directly
-                try {
-                    const defaultFileName = exportFileNameBase || 'diagram'; // Use provided base or default
-                    const theme = message.theme || 'default'; // Get theme from message, fallback to default
-                    // Pass syntax, filename, and theme to the command
-                    await vscode.commands.executeCommand('diagram.saveAs', message.syntax, defaultFileName, theme);
-                    logger.logUsage('webviewSave', { status: 'triggered', theme: theme }); // Log theme used
-                } catch (err: any) {
-                    logger.logError(err, { event: 'webviewSaveError', command: message.command });
-                    vscode.window.showErrorMessage(`Failed to trigger diagram save: ${err.message}`);
-                }
-            } else {
-                logger.logUsage('webviewMessage', { command: message.command, status: 'unknown' });
-                console.warn('Received unknown message from webview:', message);
+            logger.logUsage('webviewMessage', { command: message.command, format: message.format });
+            switch (message.command) {
+                case 'themeChange': // Although theme change is handled client-side, keep this for potential future use or logging
+                    currentTheme = message.theme;
+                    // No need to re-render HTML here, client-side handles it
+                    console.log("Theme changed in webview (client-side):", currentTheme);
+                    return;
+
+                case 'error': // Handle errors reported from webview script
+                    vscode.window.showErrorMessage(`Webview Error: ${message.message}`);
+                    logger.logError(new Error(`Webview Error: ${message.message}`), { commandName: commandName });
+                    return;
+
+                case 'exportData': // Handle export requests from the webview
+                    await handleExportRequest(message.format, message.data, exportFileNameBase || commandName, logger);
+                    return;
             }
         },
-        undefined,
+        undefined, // thisArg
+        extensionContext.subscriptions // Dispose listener when extension deactivates
+    );
+
+    // Optional: Handle panel disposal
+    panel.onDidDispose(
+        () => {
+            // Clean up resources if needed
+            console.log('Mermaid webview panel disposed');
+        },
+        null,
         extensionContext.subscriptions
     );
 
-    // 5. Handle Disposal - ensure message listener is disposed too
-    const disposeDisposable = panel.onDidDispose(
-        () => {
-            console.log(`Mermaid panel (${commandName}) disposed`);
-            exportDisposable.dispose(); // Dispose the message listener
-            // No need to dispose 'disposeDisposable' itself here
-        },
-        null // thisArg
-        // No need to add to extensionContext.subscriptions here, managed below
-    );
+    return true; // Indicate success
+}
 
-    // Add disposables related to the panel's lifecycle to subscriptions
-    extensionContext.subscriptions.push(exportDisposable, disposeDisposable);
+// --- Helper Function for Export Request Handling ---
+async function handleExportRequest(format: 'svg' | 'png', data: string, defaultFileName: string, logger: vscode.TelemetryLogger) {
+    logger.logUsage('handleExportRequest', { format: format });
+    let saveData: Buffer;
+    let filters: { [name: string]: string[] } = {};
 
+    if (format === 'svg') {
+        saveData = Buffer.from(data, 'utf8');
+        filters['Scalable Vector Graphics (.svg)'] = ['svg'];
+    } else if (format === 'png') {
+        // Data is a base64 data URL (e.g., "data:image/png;base64,iVBOR...")
+        const base64Data = data.split(',')[1]; // Get the base64 part
+        if (!base64Data) {
+            vscode.window.showErrorMessage('Invalid PNG data received from webview.');
+            logger.logError(new Error('Invalid PNG data URL received'), { format: 'png' });
+            return;
+        }
+        saveData = Buffer.from(base64Data, 'base64');
+        filters['Portable Network Graphics (.png)'] = ['png'];
+    } else {
+        vscode.window.showErrorMessage(`Unsupported export format received: ${format}`);
+        logger.logError(new Error(`Unsupported export format received: ${format}`), { format: format });
+        return;
+    }
 
-    // 6. Inform User
-    stream.markdown(`\nDiagram has been rendered in a webview panel. You can check the Mermaid syntax above.`);
+    const defaultUri = vscode.workspace.workspaceFolders
+        ? vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, `${defaultFileName}.${format}`)
+        : undefined;
 
-    return true; // Panel created and shown successfully
+    try {
+        const saveUri = await vscode.window.showSaveDialog({
+            defaultUri: defaultUri,
+            filters: filters,
+            saveLabel: `Export Diagram as ${format.toUpperCase()}`
+        });
+
+        if (saveUri) {
+            await vscode.workspace.fs.writeFile(saveUri, saveData);
+            vscode.window.showInformationMessage(`Diagram successfully exported as ${format.toUpperCase()} to: ${saveUri.fsPath}`);
+            logger.logUsage('exportHandled', { format: format, status: 'success' });
+        } else {
+            // User cancelled the save dialog
+            logger.logUsage('exportHandled', { format: format, status: 'cancelled' });
+        }
+    } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to save ${format.toUpperCase()} diagram: ${err.message}`);
+        logger.logError(new Error(`Save ${format.toUpperCase()} error: ${err.message}`), { format: format, error: err });
+    }
 }
 
 // Helper function to validate Mermaid syntax in Node.js using JSDOM

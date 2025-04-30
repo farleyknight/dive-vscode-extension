@@ -132,19 +132,10 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 			</select>
 		</div>
 		<div class="control-group">
-			 <!-- Single Export Button -->
-			 <button id="export-button">Export</button>
-			 <!-- Removed Dropdown -->
-			 <!--
-			 <div class="dropdown">
-				 <button class="dropbtn">Export</button>
-				 <div class="dropdown-content">
-					 <button id="export-md">Export to Markdown (.md)</button>
-					 <button id="export-svg">Export to SVG (.svg)</button>
-					 <button id="export-png">Export to PNG (.png)</button>
-				 </div>
-			 </div>
-			 -->
+			 <!-- Replace single button with two -->
+			 <button id="export-svg-button">Export SVG</button>
+			 <button id="export-png-button">Export PNG</button>
+			 <!-- Removed Single Export Button and Dropdown -->
 		</div>
 	</div>
 
@@ -166,6 +157,8 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 		const mermaidContainer = document.getElementById('mermaid-container');
 		const themeSelector = document.getElementById('theme-selector');
 		const initialTheme = themeSelector.value;
+		const exportSvgButton = document.getElementById('export-svg-button');
+		const exportPngButton = document.getElementById('export-png-button');
 
 		 // Store the raw syntax from the pre element's text content
         const preElement = document.querySelector('#mermaid-container pre.mermaid');
@@ -197,6 +190,9 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
                 if (!rawMermaidSyntax || typeof rawMermaidSyntax !== 'string' || rawMermaidSyntax.trim() === '') {
 					console.warn("No valid diagram syntax found to render.");
                     container.innerHTML = '<p style="color:orange;">No diagram syntax found to render.</p>';
+                    // Disable export buttons if no syntax
+                    if (exportSvgButton) exportSvgButton.disabled = true;
+                    if (exportPngButton) exportPngButton.disabled = true;
                     return;
                 }
 
@@ -219,6 +215,9 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 						errorDiv.style.display = 'block';
 					}
 					container.innerHTML = '<p style="color:red;">Failed to render diagram. Internal mermaid error. Check console.</p>';
+					// Disable export buttons on error
+					if (exportSvgButton) exportSvgButton.disabled = true;
+					if (exportPngButton) exportPngButton.disabled = true;
 					return; // Stop further processing
 				}
 
@@ -231,6 +230,9 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 					if (bindFunctions) {
 						 console.log('Applying bindFunctions.');
 						 bindFunctions(container); // Apply interactivity if any
+						 // Enable export buttons on successful render
+						 if (exportSvgButton) exportSvgButton.disabled = false;
+						 if (exportPngButton) exportPngButton.disabled = false;
 					}
 				} else {
 					// Handle cases where svg is undefined, null, or empty string
@@ -240,6 +242,9 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 						errorDiv.style.display = 'block';
 					}
 					container.innerHTML = '<p style="color:red;">Failed to render diagram. SVG output was invalid. Check syntax and Developer Tools console.</p>';
+					// Disable export buttons on error
+					if (exportSvgButton) exportSvgButton.disabled = true;
+					if (exportPngButton) exportPngButton.disabled = true;
 				}
 
 			} catch (error) {
@@ -250,6 +255,9 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 				}
 				 // Provide fallback content in the main container on error
                  container.innerHTML = '<p style="color:red;">Error rendering diagram. Check syntax and Developer Tools console (Developer: Open Webview Developer Tools).</p>';
+				 // Disable export buttons on error
+				 if (exportSvgButton) exportSvgButton.disabled = true;
+				 if (exportPngButton) exportPngButton.disabled = true;
 			}
 		}
 
@@ -263,32 +271,116 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 			renderMermaid(newTheme);
 		});
 
-		// --- Export Logic ---
-		// Removed format-specific export function
-		/*
-		function exportDiagram(format) {
-			const currentTheme = themeSelector.value;
-			console.log('Exporting diagram as ' + format + ' with theme ' + currentTheme);
+		// --- Client-Side Export Logic ---
+
+		function exportSVG() {
+			console.log('Exporting SVG...');
+			const svgElement = document.querySelector('#mermaid-container svg');
+			if (!svgElement) {
+				console.error('SVG element not found for export.');
+				vscode.postMessage({ type: 'error', message: 'Could not find the rendered SVG to export.' });
+				return;
+			}
+			const svgData = new XMLSerializer().serializeToString(svgElement);
+			// Send data back to the extension instead of triggering download
 			vscode.postMessage({
-				command: 'exportDiagram',
-				format: format,
-				syntax: rawMermaidSyntax, // Send the original syntax back
-				theme: currentTheme      // Send the selected theme
+				command: 'exportData',
+				format: 'svg',
+				data: svgData,
+				theme: themeSelector.value // Also send theme in case needed later
 			});
 		}
-		*/
 
-		// Add event listener for the single export button
-		document.getElementById('export-button').addEventListener('click', () => {
-			const currentTheme = themeSelector.value; // Get current theme
-			console.log('Export button clicked. Sending saveDiagram message with theme:', currentTheme);
-			vscode.postMessage({
-				command: 'saveDiagram', // Use the save command
-				syntax: rawMermaidSyntax, // Send syntax back
-				theme: currentTheme      // Send the selected theme
-			});
+		function exportPNG() {
+			console.log('Exporting PNG...');
+			const svgElement = document.querySelector('#mermaid-container svg');
+			if (!svgElement) {
+				console.error('SVG element not found for PNG export.');
+				vscode.postMessage({ type: 'error', message: 'Could not find the rendered SVG to create PNG.' });
+				return;
+			}
+
+			const svgData = new XMLSerializer().serializeToString(svgElement);
+			const canvas = document.createElement('canvas');
+			const ctx = canvas.getContext('2d');
+			const img = new Image();
+
+			// Store cleanup function
+			let cleanupObjectUrl = () => {};
+
+			img.onload = () => {
+				console.log('Image loaded, drawing to canvas...');
+				// Get SVG dimensions
+				const svgRect = svgElement.getBoundingClientRect();
+
+				// Add some padding maybe?
+				const padding = 10;
+				canvas.width = svgRect.width + padding * 2;
+				canvas.height = svgRect.height + padding * 2;
+
+				// Draw the image onto the canvas
+				ctx.drawImage(img, padding, padding, svgRect.width, svgRect.height);
+
+				try {
+					console.log('Converting canvas to PNG data URL...');
+					const pngDataUrl = canvas.toDataURL('image/png');
+					// Send data URL back to extension
+					vscode.postMessage({
+						command: 'exportData',
+						format: 'png',
+						data: pngDataUrl, // Send base64 data URL
+						theme: themeSelector.value // Also send theme
+					});
+				} catch (e) {
+					console.error('Error during canvas.toDataURL:', e);
+					vscode.postMessage({ type: 'error', message: 'An error occurred while creating the PNG data.' });
+				}
+			};
+
+			img.onerror = (e) => {
+				cleanupObjectUrl(); // Clean up URL on error too
+				cleanupObjectUrl = () => {};
+				console.error('Error loading SVG into image element:', e);
+				vscode.postMessage({ type: 'error', message: 'Failed to load the SVG diagram for PNG conversion.' });
+			};
+
+			console.log('Setting image source to SVG data URI...');
+			const svgDataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+			img.src = svgDataUri;
+		}
+
+		// --- Event Listeners ---
+
+		// Initial render
+		renderMermaid(initialTheme);
+
+		// Handle theme changes
+		themeSelector.addEventListener('change', (event) => {
+			const newTheme = event.target.value;
+			console.log('Theme changed to:', newTheme);
+			renderMermaid(newTheme);
 		});
 
+		// Handle Export Button Clicks
+		if (exportSvgButton) {
+			exportSvgButton.addEventListener('click', exportSVG);
+		} else {
+			console.error('Export SVG button not found');
+		}
+
+		if (exportPngButton) {
+			exportPngButton.addEventListener('click', exportPNG);
+		} else {
+			console.error('Export PNG button not found');
+		}
+
+		// Remove old message listener if it exists
+		/*
+		window.addEventListener('message', event => {
+			// Handle messages FROM the extension (if any)
+			// const message = event.data;
+		});
+		*/
 	</script>
 </body>
 </html>`;

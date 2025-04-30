@@ -10,6 +10,10 @@ Key features include:
 *   **Diagram Rendering:** Renders generated Mermaid diagrams in a VS Code Webview panel.
 *   **Theme Selection:** Allows choosing different themes for the rendered Mermaid diagrams.
 *   **Save Functionality:** Save diagrams as `.mmd`, `.md`, `.svg`, or `.png` files using the `Export` feature
+    *   **Note:** Exporting to `.svg` or `.png` requires the Mermaid CLI (`mmdc`) to be installed globally. If you don't have it, you can install it using npm:
+        ```bash
+        npm install -g @mermaid-js/mermaid-cli
+        ```
 
 ## Class Diagram Example (`@diagram /simpleUML`)
 
@@ -30,3 +34,33 @@ Key features include:
 ## Export Formats
 
 ![](docs/export_options.png)
+
+## Installation Instructions
+
+This extension is currently distributed as a VSIX package. To install:
+
+### Option 1: Using VS Code UI
+
+1. Download the VSIX file from the provided link or location
+2. Open VS Code
+3. Go to the Extensions view (click the Extensions icon in the Activity Bar or press `Ctrl+Shift+X`)
+4. Click the "..." (More Actions) menu at the top of the Extensions view
+5. Select "Install from VSIX..."
+6. Browse to and select the downloaded VSIX file
+7. Reload VS Code when prompted
+
+### Option 2: Using Command Line
+
+1. Download the VSIX file from the provided link or location
+2. Open a terminal/command prompt
+3. Run the following command:
+   ```
+   code --install-extension path/to/dive-extension.vsix
+   ```
+   (Replace `path/to/dive-extension.vsix` with the actual path to the downloaded VSIX file)
+
+### Requirements
+
+- Visual Studio Code 1.85.0 or higher
+- GitHub Copilot Chat extension (for full functionality)
+- For exporting to SVG/PNG: Mermaid CLI (`mmdc`) installed globally

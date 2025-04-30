@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for all tags and branches
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -43,11 +45,12 @@ jobs:
       - name: Generate Release Notes
         id: generate_notes
         run: |
-          # Fetch all tags to ensure we find the previous one
-          git fetch --tags
+          # Note: git fetch --tags removed as checkout fetches all history
           # Get the latest tag
           LATEST_TAG=${{ github.ref_name }}
           # Find the previous tag (handle case where it's the first tag)
+          # Ensure the LATEST_TAG exists locally before trying to describe its parent
+          git rev-parse -q --verify ${LATEST_TAG} > /dev/null
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${LATEST_TAG}^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
           echo "Previous tag: ${PREVIOUS_TAG}" # Log previous tag for debugging
           # Generate the notes

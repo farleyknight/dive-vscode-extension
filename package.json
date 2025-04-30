@@ -1,7 +1,7 @@
 {
 	"name": "dive",
 	"publisher": "farleyknight",
-	"displayName": "DIVE",
+	"displayName": "Diagram Illustration & Visualization Engine (DIVE)",
 	"description": "Chat extension that can generate diagrams",
 	"repository": {
 		"type": "git",
@@ -23,7 +23,7 @@
 		"chatParticipants": [
 			{
 				"id": "dive.diagram",
-				"fullName": "DIVE",
+				"fullName": "Diagram Illustration & Visualization Engine (DIVE)",
 				"name": "diagram",
 				"description": "What diagram can I draw for you?",
 				"isSticky": true,

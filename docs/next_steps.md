@@ -1,3 +1,51 @@
+## New Feature: `/restEndpoint` Diagram Generation
+
+*   **Goal:** Allow users to generate a sequence diagram visualizing the call hierarchy for a specified Java Spring Boot REST endpoint using the Java LSP.
+
+**Next Steps:**
+
+1.  **Command Setup (`/restEndpoint`):**
+    *   Update the chat participant handler in `src/simple.ts` to recognize the `/restEndpoint` command.
+    *   Extract the endpoint identifier (e.g., "GET /api/users") provided by the user as an argument to the command.
+    *   Create a new handler function `handleRestEndpoint(params: CommandHandlerParams, endpointString: string)` in `src/simple.ts`.
+    *   Parse `endpointString` to get the HTTP method and path pattern.
+    *   **Testing:** Manually invoke `@dive /restEndpoint GET /api/test` in chat and verify the handler is called (via logging/debugger). Unit test the endpoint string parsing logic.
+
+2.  **Endpoint Method Location:**
+    *   Implement workspace searching logic (e.g., using `vscode.workspace.findFiles('**/*.java')`) to find potential controller files.
+    *   Within Java files, parse or use LSP symbols (`vscode.executeCommand('vscode.executeWorkspaceSymbolProvider', query)`) to find method definitions annotated with Spring REST annotations (e.g., `@GetMapping`, `@PostMapping`).
+    *   Match the annotations' paths and methods against the user-provided `endpointString` to pinpoint the exact `vscode.Uri` and `vscode.Position` of the target endpoint method. Handle path variables appropriately.
+    *   **Testing:** Unit test the file searching and annotation matching logic against mock Java files. Manually test against a real Spring Boot project to ensure it finds the correct method location for various endpoints.
+
+3.  **Java LSP Call Hierarchy Integration:**
+    *   Identify the correct VS Code command provided by the installed Java extension for fetching call hierarchies (e.g., `vscode.prepareCallHierarchy`, `java.showCallHierarchy`, followed by `vscode.provideOutgoingCalls`). This might require checking the Java extension's contributions.
+    *   Use `vscode.commands.executeCommand` to invoke the call hierarchy provider with the URI and position found in step 2.
+    *   Recursively fetch *outgoing* calls (`vscode.provideOutgoingCalls`) to build a data structure (like a tree or graph) representing the call flow from the endpoint method down to a reasonable depth (e.g., 3-5 levels). Handle cycles gracefully.
+    *   **Testing:** Unit test the recursive call fetching and data structure building logic by mocking `vscode.commands.executeCommand`. Manually test against a real Spring Boot project with a known call structure and verify the resulting diagram accuracy.
+
+4.  **Sequence Diagram Generation:**
+    *   Create a function that traverses the call hierarchy data structure generated in step 3.
+    *   Translate the call flow (classes/methods calling other methods) into a Mermaid `sequenceDiagram` syntax string.
+    *   **Testing:** Unit test the diagram generation function with various pre-defined call hierarchy data structures (simple, branched, cyclic, deep) and verify the output Mermaid syntax is correct and valid.
+
+5.  **Display Results:**
+    *   Pass the generated Mermaid syntax to the existing `createAndShowDiagramWebview` function in `src/simple.ts` to render the diagram in a webview panel.
+    *   Use a distinct `panelId` and `panelTitle` for this feature.
+    *   **Testing:** Manually invoke the command and verify the webview opens with the correct title and renders the diagram. (Relies on existing tested functionality).
+
+6.  **User Feedback and Error Handling:**
+    *   Implement progress messages using `stream.progress()` (e.g., "Finding endpoint...", "Analyzing calls...", "Generating diagram...").
+    *   Add robust error handling and user-friendly messages via `stream.markdown()` for scenarios like:
+        *   Endpoint string parsing failure.
+        *   Endpoint method not found in the workspace.
+        *   Java extension or call hierarchy feature not available/failing.
+        *   Errors during diagram generation.
+    *   **Testing:** Manually trigger error conditions (invalid input, missing endpoint, disabled Java extension) and verify correct progress/error messages appear in the chat. Unit test specific error paths by mocking failures in dependencies.
+
+7.  **Documentation:**
+    *   Update `README.md` to document the new `/restEndpoint <METHOD /path>` command, its usage, and prerequisites (Java extension with call hierarchy support).
+    *   **Testing:** Manually review the updated `README.md` for clarity and accuracy.
+
 ## Next Steps:
 
 *Goal: [Describe next major goal here]*

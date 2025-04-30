@@ -7,7 +7,7 @@
 		"type": "git",
 		"url": "https://github.com/farleyknight/dive-vscode-extension"
 	},
-	"version": "1.0.8",
+	"version": "1.0.9",
 	"engines": {
 		"vscode": "^1.99.1"
 	},

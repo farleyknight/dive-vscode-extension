@@ -424,7 +424,7 @@ async function createAndShowDiagramWebview(
 
 
     // 6. Inform User
-    stream.markdown(`\\nDiagram has been rendered in a webview panel. You can check the Mermaid syntax above.`);
+    stream.markdown(`\nDiagram has been rendered in a webview panel. You can check the Mermaid syntax above.`);
 
     return true; // Panel created and shown successfully
 }
@@ -474,11 +474,10 @@ async function validateMermaidSyntax(
         });
         await mermaid.default.parse(syntax);
 
-        stream.markdown('\nMermaid syntax validated successfully.');
         return true;
     } catch (err: any) {
         const errorMessage = err.message || String(err);
-        stream.markdown(`\\n**Mermaid Syntax Validation Error (Node.js):**\\n\\n${errorMessage}\\n\\nPlease check the generated syntax.`);
+        stream.markdown(`\n**Mermaid Syntax Validation Error (Node.js):**\n\n${errorMessage}\n\nPlease check the generated syntax.`);
         logger.logError(new Error('Mermaid Syntax Error (Node.js)'), { command: commandName, error: errorMessage, syntax });
         return false;
     } finally {

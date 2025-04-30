@@ -69,7 +69,7 @@ To package the extension for distribution without publishing to the VS Code Mark
 
 3. **Package the extension**:
    ```bash
-   vsce package
+   vsce package --skip-license
    ```
    This creates a `.vsix` file in your project directory that you can distribute to others.
 
@@ -81,4 +81,4 @@ To package the extension for distribution without publishing to the VS Code Mark
 
 5. **For new versions**:
    - Update the `version` in package.json
-   - Run `vsce package` again to create a new VSIX file with the updated version
+   - Run `vsce package --skip-license` again to create a new VSIX file with the updated version

@@ -31,14 +31,18 @@ jobs:
         # Run vsce package and capture the output to get the filename
         # Using --skip-license as in your docs example
         run: |
-          vsce package --skip-license
-          # Find the generated vsix file and set it as an output
-          vsix_path=$(find . -maxdepth 1 -name "*.vsix")
-          echo "vsix_path=${vsix_path}" >> $GITHUB_OUTPUT
+          # Extract version from tag (e.g., v1.0.1 -> 1.0.1)
+          VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
+          # Define the desired filename
+          FILENAME="dive-vscode-extension-${VERSION}.vsix"
+          # Package with the specified output filename
+          vsce package --skip-license -o "${FILENAME}"
+          # Set the generated vsix file path as an output
+          echo "vsix_path=${FILENAME}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         id: create_release
-        uses: actions/create-release@v1
+        uses: actions/create-release@v1.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -48,7 +52,7 @@ jobs:
           prerelease: false
 
       - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
+        uses: actions/upload-release-asset@v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

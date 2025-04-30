@@ -387,25 +387,38 @@ async function createAndShowDiagramWebview(
 
     // 4. Handle Export Messages
     const exportDisposable = panel.webview.onDidReceiveMessage(
-        message => {
-            if (message.command === 'exportDiagram') {
-                console.log(`Received export request for format: ${message.format} with theme: ${message.theme} from /${commandName}`);
-                // Construct arguments for save command
-                const saveArgs: (string | undefined)[] = [message.syntax, message.format, message.theme];
-                if (exportFileNameBase) {
-                    saveArgs.push(exportFileNameBase);
+        async message => {
+            logger.logUsage('webviewMessage', { command: message.command }); // Log received command
+            if (message.command === 'exportDiagram') { // Keep existing logic for now, though maybe unused
+                // We need to call the existing 'diagram.saveAs' command
+                // We can get the syntax from the message
+                try {
+                    const defaultFileName = exportFileNameBase || 'diagram'; // Use provided base or default
+                    await vscode.commands.executeCommand('diagram.saveAs', message.syntax, defaultFileName);
+                    logger.logUsage('webviewExport', { format: message.format, status: 'triggered' });
+                } catch (err: any) {
+                    logger.logError(err, { event: 'webviewExportError', command: message.command, format: message.format });
+                    vscode.window.showErrorMessage(`Failed to trigger diagram save: ${err.message}`);
                 }
-                // Trigger the save command
-                vscode.commands.executeCommand('diagram.saveAs', ...saveArgs)
-                    .then(undefined, err => {
-                        const errorMsg = err instanceof Error ? err.message : String(err);
-                        console.error(`Error executing diagram.saveAs command from /${commandName}:`, err);
-                        vscode.window.showErrorMessage(`Failed to export diagram: ${errorMsg}`);
-                    });
+            } else if (message.command === 'saveDiagram') { // Add handler for the new command
+                // Trigger the existing saveAs command directly
+                try {
+                    const defaultFileName = exportFileNameBase || 'diagram'; // Use provided base or default
+                    const theme = message.theme || 'default'; // Get theme from message, fallback to default
+                    // Pass syntax, filename, and theme to the command
+                    await vscode.commands.executeCommand('diagram.saveAs', message.syntax, defaultFileName, theme);
+                    logger.logUsage('webviewSave', { status: 'triggered', theme: theme }); // Log theme used
+                } catch (err: any) {
+                    logger.logError(err, { event: 'webviewSaveError', command: message.command });
+                    vscode.window.showErrorMessage(`Failed to trigger diagram save: ${err.message}`);
+                }
+            } else {
+                logger.logUsage('webviewMessage', { command: message.command, status: 'unknown' });
+                console.warn('Received unknown message from webview:', message);
             }
         },
-        undefined // thisArg
-        // No need to add to extensionContext.subscriptions here, managed below
+        undefined,
+        extensionContext.subscriptions
     );
 
     // 5. Handle Disposal - ensure message listener is disposed too

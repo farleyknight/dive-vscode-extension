@@ -86,7 +86,8 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 			font-family: monospace;
 			white-space: pre-wrap;
 		}
-		/* Dropdown for Export */
+		/* Dropdown for Export - REMOVED */
+		/*
 		.dropdown {
 			position: relative;
 			display: inline-block;
@@ -119,6 +120,7 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 		.dropdown:hover .dropdown-content {
 			display: block;
 		}
+		*/
 	</style>
 </head>
 <body>
@@ -130,14 +132,19 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 			</select>
 		</div>
 		<div class="control-group">
-             <div class="dropdown">
-                <button class="dropbtn">Export</button>
-                <div class="dropdown-content">
-                    <button id="export-md">Export to Markdown (.md)</button>
-                    <button id="export-svg">Export to SVG (.svg)</button>
-                    <button id="export-png">Export to PNG (.png)</button>
-                </div>
-            </div>
+			 <!-- Single Export Button -->
+			 <button id="export-button">Export</button>
+			 <!-- Removed Dropdown -->
+			 <!--
+			 <div class="dropdown">
+				 <button class="dropbtn">Export</button>
+				 <div class="dropdown-content">
+					 <button id="export-md">Export to Markdown (.md)</button>
+					 <button id="export-svg">Export to SVG (.svg)</button>
+					 <button id="export-png">Export to PNG (.png)</button>
+				 </div>
+			 </div>
+			 -->
 		</div>
 	</div>
 
@@ -257,20 +264,30 @@ export function getMermaidWebviewHtml(mermaidDiagram: string, theme: string = 'd
 		});
 
 		// --- Export Logic ---
-        function exportDiagram(format) {
-            const currentTheme = themeSelector.value;
-            console.log('Exporting diagram as ' + format + ' with theme ' + currentTheme);
-            vscode.postMessage({
-                command: 'exportDiagram',
-                format: format,
-                syntax: rawMermaidSyntax, // Send the original syntax back
-                theme: currentTheme      // Send the selected theme
-            });
-        }
+		// Removed format-specific export function
+		/*
+		function exportDiagram(format) {
+			const currentTheme = themeSelector.value;
+			console.log('Exporting diagram as ' + format + ' with theme ' + currentTheme);
+			vscode.postMessage({
+				command: 'exportDiagram',
+				format: format,
+				syntax: rawMermaidSyntax, // Send the original syntax back
+				theme: currentTheme      // Send the selected theme
+			});
+		}
+		*/
 
-        document.getElementById('export-md').addEventListener('click', () => exportDiagram('md'));
-        document.getElementById('export-svg').addEventListener('click', () => exportDiagram('svg'));
-        document.getElementById('export-png').addEventListener('click', () => exportDiagram('png'));
+		// Add event listener for the single export button
+		document.getElementById('export-button').addEventListener('click', () => {
+			const currentTheme = themeSelector.value; // Get current theme
+			console.log('Export button clicked. Sending saveDiagram message with theme:', currentTheme);
+			vscode.postMessage({
+				command: 'saveDiagram', // Use the save command
+				syntax: rawMermaidSyntax, // Send syntax back
+				theme: currentTheme      // Send the selected theme
+			});
+		});
 
 	</script>
 </body>

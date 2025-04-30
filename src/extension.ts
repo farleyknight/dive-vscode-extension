@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
     registerDiagramTools(context);
 
     // Register the save command
-    context.subscriptions.push(vscode.commands.registerCommand('diagram.saveAs', async (mermaidSyntax: string, defaultFileName: string) => {
+    context.subscriptions.push(vscode.commands.registerCommand('diagram.saveAs', async (mermaidSyntax: string, defaultFileName: string, theme: string = 'default') => {
         if (!mermaidSyntax) {
             vscode.window.showErrorMessage('No diagram syntax available to save.');
             return;
@@ -49,7 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
                     await vscode.workspace.fs.writeFile(saveUri, Buffer.from(markdownContent, 'utf8'));
                     vscode.window.showInformationMessage(`Diagram saved as Markdown: ${saveUri.fsPath}`);
                 } else if (fileExtension === 'svg' || fileExtension === 'png') {
-                    await exportDiagramWithMMDC(mermaidSyntax, saveUri, fileExtension, context);
+                    await exportDiagramWithMMDC(mermaidSyntax, saveUri, fileExtension as ('svg' | 'png'), context, theme);
                 } else {
                     vscode.window.showErrorMessage(`Unsupported file format: .${fileExtension}`);
                 }
@@ -110,7 +110,7 @@ async function findMmdcExecutable(context: vscode.ExtensionContext): Promise<str
 }
 
 // Helper function to export using MMDC
-async function exportDiagramWithMMDC(mermaidSyntax: string, outputUri: vscode.Uri, format: 'svg' | 'png', context: vscode.ExtensionContext) {
+async function exportDiagramWithMMDC(mermaidSyntax: string, outputUri: vscode.Uri, format: 'svg' | 'png', context: vscode.ExtensionContext, theme: string = 'default') {
     const mmdcPath = await findMmdcExecutable(context);
 
     if (!mmdcPath) {
@@ -129,7 +129,7 @@ async function exportDiagramWithMMDC(mermaidSyntax: string, outputUri: vscode.Ur
         const args = [
             '-i', tempInputFile,
             '-o', tempOutputFile,
-            '-t', 'dark', // Or make theme configurable
+            '-t', theme,
             '-b', 'transparent' // Optional: set background color
         ];
 

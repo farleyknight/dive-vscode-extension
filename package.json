@@ -9,7 +9,7 @@
 	},
 	"version": "1.0.0",
 	"engines": {
-		"vscode": "^1.95.0"
+		"vscode": "^1.99.1"
 	},
 	"categories": [
 		"AI",
@@ -46,9 +46,9 @@
 						"category": "diagram",
 						"description": "The user wants to learn a specific computer science topic in an informal way, potentially with diagrams.",
 						"examples": [
-							"Teach me C++ pointers using metaphors",
-							"Explain to me what is a linked list in a simple way",
-							"Can you explain to me what is a function in programming?"
+							"Generate a class diagram for the current file",
+							"Generate a sequence diagram for the current file",
+							"Generate a relationship diagram for the current file"
 						]
 					}
 				]

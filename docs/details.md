@@ -26,7 +26,7 @@ The extension defines and registers the following tools that the language model 
 
 -   **`diagram.saveAs`:** Save the displayed Mermaid diagram to a file (supports `.mmd`, `.md`, `.svg`, `.png`). Requires Mermaid CLI (`mmdc`) for SVG/PNG export.
 
-## Installing DIVE
+## Installing DIVE for Development
 
 1.  **Install Dependencies:** Run `npm install` in the terminal.
 2.  **Compile/Watch:** Run `npm run watch` to compile the TypeScript code and watch for changes.
@@ -53,3 +53,32 @@ code --extensionDevelopmentPath=$PWD --log debug
 -   **Compile:** `npm run compile` (runs `tsc -p ./`)
 -   **Lint:** `npm run lint` (runs `eslint`)
 -   **Watch:** `npm run watch` (runs `tsc -watch -p ./`)
+
+## Packaging DIVE for Distribution
+
+To package the extension for distribution without publishing to the VS Code Marketplace:
+
+1. **Install the packaging tool** if you haven't already:
+   ```bash
+   npm install -g @vscode/vsce
+   ```
+
+2. **Update your package.json** with all required metadata:
+   - Ensure you have valid `publisher`, `name`, `displayName`, `description`, `version`, etc.
+   - Make sure all dependencies are correctly listed
+
+3. **Package the extension**:
+   ```bash
+   vsce package
+   ```
+   This creates a `.vsix` file in your project directory that you can distribute to others.
+
+4. **Testing the packaged extension**:
+   Before distributing, install your packaged extension locally to verify it works:
+   ```bash
+   code --install-extension your-extension-name-version.vsix
+   ```
+
+5. **For new versions**:
+   - Update the `version` in package.json
+   - Run `vsce package` again to create a new VSIX file with the updated version

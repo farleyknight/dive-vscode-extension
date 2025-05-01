@@ -63,6 +63,18 @@
     - Does NOT use the Mermaid CLI (`mmdc`).
 - A "Save As..." button (`vscode.Command`) is still added to chat responses for `/simpleUML`, `/relationUML`, and `/sequence` in `src/simple.ts`, triggering the `diagram.saveAs` command for saving `.mmd` or `.md` formats.
 
+## Testing Infrastructure
+
+- **Framework:** Mocha is used as the test runner.
+- **VS Code Integration:** Tests are run within a dedicated VS Code instance using `@vscode/test-electron` to ensure the `vscode` API is available.
+- **Configuration:**
+    - `tsconfig.json` is configured to compile both `src` and `test` files.
+    - `package.json` includes a `test` script (`npm test`) that compiles the code and invokes the test runner (`node ./out/test/runTest.js`).
+    - Helper scripts `test/runTest.ts` (main runner) and `test/suite/index.ts` (Mocha entry point) manage the test execution process.
+- **Fixtures:**
+    - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and `TestController.java` with various REST endpoint annotations, intended for testing endpoint discovery.
+- **Current Status:** Basic test infrastructure is set up and the initial sample test passes. Specific feature tests (like for endpoint discovery) still need to be written.
+
 ## Dependencies
 
 - `mermaid` npm package.
@@ -116,6 +128,4 @@
 *   `/simpleUML` and `/relationUML` include prompts for the LLM to automatically detect appropriate diagram types based on code analysis.
 *   JSDOM/DOMPurify are used server-side for syntax validation (`validateMermaidSyntax`). This adds dependencies.
 *   Webview communication (`postMessage`, `onDidReceiveMessage`) handles theme changes. Export is now handled fully client-side.
-*   The "Save As..." button (`vscode.Command`) is added to chat responses for `/simpleUML`, `/relationUML`, and `/sequence`, triggering the `diagram.saveAs` command (for `.mmd`/`.md` save).
-
----
+*   The "Save As..." button (`vscode.Command`) is added to chat responses for `/simpleUML`, `/relationUML`, and `/sequence`, triggering the `diagram.saveAs` command (for `.mmd`

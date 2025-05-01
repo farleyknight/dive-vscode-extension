@@ -9,7 +9,43 @@
 3.  **Install Testing Dependencies:** Add development dependencies for a testing framework like Mocha and its type definitions (`mocha`, `@types/mocha`, `@types/node`).
 4.  **Configure Test Runner:** Configure `package.json` with a test script to run Mocha tests (e.g., `"test": "mocha"`). Set up necessary configuration for TypeScript tests (e.g., `tsconfig.json` for tests or using `ts-node`).
 5.  **Write Initial Test:** Write a basic test case in `test/suite` (e.g., `endpoint-discovery.test.ts`) to verify the testing setup is working.
-6.  **Test Endpoint Discovery:** Write unit tests for `src/endpoint-discovery.ts`'s `discoverEndpoints` function, using the Java fixture project. Mock `vscode.commands.executeCommand` to return appropriate symbols based on the fixture.
+6.  **Test Endpoint Discovery (`src/endpoint-discovery.ts`)**
+    *   **Goal:** Write comprehensive unit tests for the `discoverEndpoints` function. These tests will drive the implementation and ensure it correctly identifies Spring Boot REST endpoints under various conditions using a range of common annotations.
+    *   **Annotations to Support & Test:**
+        *   `@RestController`, `@Controller` (with `@ResponseBody`)
+        *   `@RequestMapping` (Class/Method, various attributes: `path`, `value`, `method`, `params`, `headers`, `consumes`, `produces`)
+        *   `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`
+        *   Parameter Annotations (verify they don't break discovery): `@PathVariable`, `@RequestParam`, `@RequestBody`
+        *   Return Type: `ResponseEntity` (verify it doesn't break discovery)
+        *   (Future/Optional) Consider `@ExceptionHandler`, `@ControllerAdvice` if relevant to endpoint context later.
+    *   **Strategy:** Use the Java fixture project (`test/fixtures/java-spring-test-project`). Tests will need to mock the underlying mechanism used for finding annotations (e.g., `vscode.commands.executeCommand` for LSP symbol search, or `vscode.workspace.findFiles` + file parsing).
+    *   **Test Categories & Cases (Ensure Fixtures Exist):**
+        *   **Basic Discovery & HTTP Methods:**
+            *   Find `@GetMapping` combined with class-level `@RequestMapping`.
+            *   Find `@PostMapping` on a method in a `@RestController`.
+            *   Find `@PutMapping` (Requires adding fixture).
+            *   Find `@DeleteMapping` (Requires adding fixture).
+            *   Find `@PatchMapping` (Requires adding fixture).
+            *   Find `@RequestMapping` with `method = RequestMethod.XXX`.
+            *   Handle `@RequestMapping` without specific method (TBD: 'ANY' or all methods).
+        *   **Path Variations:**
+            *   Combine class and method level paths (`@RequestMapping("/class")` + `@GetMapping("/method")` -> `/class/method`).
+            *   Handle path variables correctly (`/users/{userId}`).
+            *   Handle multiple paths in one annotation (`@GetMapping({"/a", "/b"})`). (Requires adding fixture).
+            *   Handle root paths (`/`) and empty paths (`""`). (Requires adding fixture).
+            *   Handle paths with/without leading/trailing slashes.
+        *   **Annotation Placement & Combinations:**
+            *   Find endpoints in `@RestController` without class-level `@RequestMapping`. (Requires adding fixture).
+            *   Find endpoints in `@Controller` using method-level `@ResponseBody`. (Requires adding fixture).
+            *   Verify methods *without* mapping annotations are ignored.
+            *   Verify parameter annotations (`@PathVariable`, `@RequestParam`, `@RequestBody`) don't prevent discovery. (Requires adding fixture variations).
+            *   Verify `ResponseEntity` return type doesn't prevent discovery. (Requires adding fixture variations).
+        *   **Multiple Files/Controllers:**
+            *   Discover endpoints spread across multiple `@RestController` classes/files. (Requires adding fixture).
+        *   **Edge Cases:**
+            *   Handle no relevant annotations found (empty list).
+            *   (Optional) Handle unparseable Java files.
+    *   **Iteration:** Acknowledge that more test cases or fixture modifications might be needed as implementation progresses.
 
 ---
 
@@ -20,9 +56,9 @@
 **Next Steps:**
 
 2.  **Endpoint Discovery and Disambiguation:**
-    *   **Discover All Endpoints:** Implement logic to find *all* Spring Boot REST endpoints within the workspace. This could involve:
-        *   Using Java LSP features (e.g., `vscode.executeWorkspaceSymbolProvider` searching for annotations like `@RestController`, `@RequestMapping`, `@GetMapping`, etc.).
-        *   Alternatively, using `vscode.workspace.findFiles('**/*.java')` and parsing files to find these annotations directly.
+    *   **Discover All Endpoints:** Implement logic (in `src/endpoint-discovery.ts` function `discoverEndpoints`) to find *all* Spring Boot REST endpoints within the workspace. Consider two main approaches:
+        *   **Approach 1: LSP-based:** Use `vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', query)` with queries targeting annotations like `@RestController`, `@GetMapping`, etc. (Relies on Java Language Support extension).
+        *   **Approach 2: Manual Parsing:** Use `vscode.workspace.findFiles('**/*.java')` to get all Java files and then parse their content (e.g., using regex or a parser library) to find relevant annotations and construct paths.
     *   Create a structured list of found endpoints, including method, path, and source location (URI and position). Example: `[{ method: 'POST', path: '/api/users', uri: vscode.Uri, position: vscode.Position, description: 'Creates a new user' /* Optional: extracted from Javadoc/comments */ }, ...] `.
     *   **Identify Target Endpoint:** Use the `naturalLanguageQuery` from step 1 to identify the most likely target endpoint from the discovered list. This may involve:
         *   Simple keyword matching between the query and the endpoint paths/methods/descriptions.
@@ -68,37 +104,45 @@
 
 ## Completed Tasks
 
-1.  **Command Setup (`/restEndpoint`):**
+1.  **Set Up Unit Testing Infrastructure (Steps 1-5):**
+    *   Created `test/suite` and `test/fixtures` directories.
+    *   Created Java fixture project (`test/fixtures/java-spring-test-project`) with `pom.xml` and `TestController.java` containing various REST annotations.
+    *   Installed Mocha, `@types/mocha`, `@types/node`, `glob`, `@types/glob`, `@vscode/test-electron`.
+    *   Configured `tsconfig.json` to compile tests.
+    *   Configured `package.json` test script (`npm test`) to use `@vscode/test-electron` runner.
+    *   Created initial test runner scripts (`test/runTest.ts`, `test/suite/index.ts`) and a sample test file (`test/suite/extension.test.ts`).
+
+2.  **Command Setup (`/restEndpoint`):**
     *   Update the chat participant handler in `src/simple.ts` to recognize the `/restEndpoint` command.
     *   Extract the natural language query provided by the user (e.g., "Give me details on the test API") as an argument to the command.
     *   Create a new handler function `handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string)` in `src/simple.ts`.
     *   **Testing:** Manually invoke `@diagram /restEndpoint Show the user creation flow` in chat and verify the handler is called with the correct query string (via logging/debugger).
 
-2.  **Implement Client-Side Diagram Export:**
+3.  **Implement Client-Side Diagram Export:**
     *   *Goal: Replace backend `mmdc`-based export with client-side `mermaid.min.js`.*
     *   Modified webview template (`src/views/mermaid-webview-template.ts`) to include "Export SVG" and "Export PNG" buttons.
     *   Added JavaScript logic to the webview for SVG export (`Blob`, `URL.createObjectURL`) and PNG export (`Canvas`, `Image`, `toBlob`).
     *   Removed SVG/PNG export logic using `@mermaid-js/mermaid-cli` from the `diagram.saveAs` command handler in `src/extension.ts`.
     *   Removed the `@mermaid-js/mermaid-cli` dependency from `package.json`.
 
-3.  **Add a dropdown that can change the theme of the diagram.**
+4.  **Add a dropdown that can change the theme of the diagram.**
     *   Added a `<select>` dropdown to the webview HTML generated by `/simpleUML`, `/relationUML`, and the `RenderDiagramTool` (in `src/tool-handlers.ts`).
     *   Added JavaScript to handle dropdown changes, re-initializing/re-rendering the Mermaid diagram with the selected theme (`default`, `neutral`, `dark`, `forest`).
     *   Set `retainContextWhenHidden: true` for webviews to preserve theme selection.
 
-4.  **Add a "Save Diagram" Button:**
+5.  **Add a "Save Diagram" Button:**
     1.  **Declare Command:** Defined `diagram.saveAs` in `package.json`.
     2.  **Register Command:** Registered handler in `extension.ts` using `vscode.commands.registerCommand`, implementing save dialog and file writing.
     3.  **Create Button Command:** Created `vscode.Command` object in the `/fromCurrentFile` and `/showConnections` handlers in `src/simple.ts`.
     4.  **Add Button to Stream:** Called `stream.button()` in the `/fromCurrentFile` and `/showConnections` handlers to display the button.
 
-5.  **Bug Fixes:**
+6.  **Bug Fixes:**
     *   Fixed webview panel rendering regression in `RenderDiagramTool`
 
-6.  **Command Structure Cleanup:**
+7.  **Command Structure Cleanup:**
     *   Removed `/randomTeach` endpoint
     *   Removed `/play` endpoint
     *   Simplified command structure to focus on diagram-related functionality
 
-7.  **Tool Implementation:**
+8.  **Tool Implementation:**
     *   Implemented proper tool classes with `

@@ -1,0 +1,6 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+After completing this task, you should run unit tests by running `npm test`.

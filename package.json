@@ -104,6 +104,7 @@
 		"compile": "tsc -p ./",
 		"lint": "eslint",
 		"watch": "tsc -watch -p ./",
+		"test": "npm run compile && node ./out/test/runTest.js",
 		"release:patch": "git fetch --tags && npm version patch && git push --follow-tags",
 		"release:minor": "git fetch --tags && npm version minor && git push --follow-tags",
 		"release:major": "git fetch --tags && npm version major && git push --follow-tags"
@@ -120,14 +121,18 @@
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^4.2.0",
+		"@types/glob": "^8.1.0",
+		"@types/mocha": "^10.0.10",
 		"@types/node": "^22.15.3",
 		"@types/vscode": "^1.99.1",
 		"@typescript-eslint/eslint-plugin": "^8.31.1",
 		"@typescript-eslint/parser": "^8.31.1",
-		"eslint": "^9.25.1",
-		"typescript": "^5.8.3",
-		"typescript-eslint": "^8.31.1",
 		"@vscode/test-cli": "^0.0.9",
-		"@vscode/test-electron": "^2.3.9"
+		"@vscode/test-electron": "^2.3.9",
+		"eslint": "^9.25.1",
+		"glob": "^11.0.2",
+		"mocha": "^11.1.0",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "^8.31.1"
 	}
 }

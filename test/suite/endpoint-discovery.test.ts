@@ -3,7 +3,19 @@ import * as vscode from 'vscode';
 import { discoverEndpoints, EndpointInfo } from '../../src/endpoint-discovery'; // Adjust path if needed
 import * as sinon from 'sinon'; // Using sinon for mocking
 
-suite('Endpoint Discovery Suite', () => {
+// // Check the environment variable value - REMOVED
+// console.log(`[endpoint-discovery.test.ts] Checking DIVE_TEST_GLOB: ${process.env.DIVE_TEST_GLOB}`);
+
+// // Skip this entire suite if we are running E2E tests targeting a specific file - REMOVED
+// const shouldSkip = !!process.env.DIVE_TEST_GLOB;
+
+// suite(`Endpoint Discovery Suite${shouldSkip ? ' (Skipped in E2E specific run)' : ''}`, () => { // REMOVED condition
+suite('Endpoint Discovery Suite', () => { // Standard suite definition
+	// if (shouldSkip) { // REMOVED skip logic
+	// 	console.log('Skipping Endpoint Discovery unit tests because DIVE_TEST_GLOB is set.');
+	// 	return; // Exit the suite function early
+	// }
+
 	let sandbox: sinon.SinonSandbox;
 	let executeCommandStub: sinon.SinonStub;
 

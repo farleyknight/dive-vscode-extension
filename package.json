@@ -101,10 +101,13 @@
 	"main": "./out/extension.js",
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
+		"clean": "rm -rf ./out",
+		"compile": "npm run clean && tsc -p ./",
 		"lint": "eslint",
-		"watch": "tsc -watch -p ./",
-		"test": "npm run compile && node ./out/test/runTest.js",
+		"watch": "npm run clean && tsc -watch -p ./",
+		"test:unit": "npm run compile && mocha \"out/test/suite/*.test.js\"",
+		"test:e2e": "npm run compile && node ./out/test/runTest.js",
+		"test": "npm run test:unit && npm run test:e2e",
 		"release:patch": "git fetch --tags && npm version patch && git push --follow-tags",
 		"release:minor": "git fetch --tags && npm version minor && git push --follow-tags",
 		"release:major": "git fetch --tags && npm version major && git push --follow-tags"

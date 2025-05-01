@@ -74,6 +74,69 @@
 - **Fixtures:**
     - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and `TestController.java` with various REST endpoint annotations, intended for testing endpoint discovery.
 - **Current Status:** Basic test infrastructure is set up and the initial sample test passes. Specific feature tests (like for endpoint discovery) still need to be written.
+- **Debugging LSP Interactions:** The E2E tests (`src/test/suite/e2e.test.ts`) are useful for debugging interactions with the Java Language Server. By running the tests (`npm test`), you can observe the console output, which logs the requests made to the LSP (e.g., `vscode.executeWorkspaceSymbolProvider`) and the responses received. This helps verify if the LSP is running correctly and providing the expected symbols. For example, successful symbol discovery looks like this:
+
+  ```
+  Executing vscode.executeWorkspaceSymbolProvider for "TestController"...
+
+  --- Found Symbols ---
+  [
+    {
+      "name": "TestController",
+      "kind": "Class",
+      "location": {
+        "uri": {
+          "$mid": 1,
+          "path": "/Users/farleyknight/Projects/dive-vscode-extension/test-fixtures/e2e-java-project/src/main/java/com/example/demo/DemoApplication.java",
+          "scheme": "file"
+        },
+        "range": [
+          {
+            "line": 17,
+            "character": 6
+          },
+          {
+            "line": 17,
+            "character": 20
+          }
+        ]
+      },
+      "containerName": "com.example.demo"
+    }
+  ]
+  ---------------------
+
+  Executing vscode.executeDocumentSymbolProvider...
+
+  --- Found Document Symbols ---
+  [
+    {
+      "name": "TestController",
+      "kind": "Class",
+      "location": {
+        "uri": {
+          "$mid": 1,
+          "fsPath": "/Users/farleyknight/Projects/dive-vscode-extension/test-fixtures/e2e-java-project/src/main/java/com/example/demo/DemoApplication.java",
+          "external": "file:///Users/farleyknight/Projects/dive-vscode-extension/test-fixtures/e2e-java-project/src/main/java/com/example/demo/DemoApplication.java",
+          "path": "/Users/farleyknight/Projects/dive-vscode-extension/test-fixtures/e2e-java-project/src/main/java/com/example/demo/DemoApplication.java",
+          "scheme": "file"
+        },
+        "range": [
+          {
+            "line": 16,
+            "character": 0
+          },
+          {
+            "line": 23,
+            "character": 1
+          }
+        ]
+      },
+      "containerName": ""
+    }
+  ]
+  ---------------------------
+  ```
 
 ## Dependencies
 

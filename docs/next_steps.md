@@ -1,3 +1,26 @@
+## Goal: Set Up End-to-End Testing Infrastructure
+
+*   **Goal:** Set up an end-to-end (E2E) testing environment that runs the extension within a real VS Code instance, interacting with a live Java Language Server, to test LSP interactions and observe LSP behavior.
+
+**Next Steps:**
+
+1.  **Configure Test Runner (`@vscode/test-electron`):**
+    *   Locate or create `src/test/runTest.ts`.
+    *   Configure it to launch VS Code with a dedicated test workspace.
+    *   Ensure it can specify extensions to install (e.g., a Java LSP extension).
+2.  **Create E2E Test Workspace:**
+    *   Create a directory (e.g., `test-fixtures/e2e-java-project`) containing a minimal Java Spring Boot project.
+    *   Include Java files with annotations relevant to endpoint discovery.
+3.  **Create E2E Test Suite:**
+    *   Add a new test file (e.g., `test/suite/e2e.test.ts`) using Mocha (or the existing framework).
+4.  **Implement LSP Interaction Tests:**
+    *   Write tests within the E2E suite that:
+        *   Open Java files from the test workspace (`vscode.workspace.openTextDocument`, `vscode.window.showTextDocument`).
+        *   **Wait for LSP Initialization:** Implement a reliable mechanism (e.g., checking LSP status, or using a sufficient delay initially).
+        *   Execute Java LSP commands (`vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider`, etc.).
+        *   Log LSP results for observation (`console.log`).
+        *   (Future) Add assertions to verify LSP responses against expected outcomes.
+
 ## Goal: Set Up Unit Testing Infrastructure
 
 *   **Goal:** Establish a unit testing framework (e.g., Mocha) and create initial test fixtures, including a simple Java Spring Boot project, to enable testing of features like endpoint discovery.
@@ -18,7 +41,7 @@
         *   Parameter Annotations (verify they don't break discovery): `@PathVariable`, `@RequestParam`, `@RequestBody`
         *   Return Type: `ResponseEntity` (verify it doesn't break discovery)
         *   (Future/Optional) Consider `@ExceptionHandler`, `@ControllerAdvice` if relevant to endpoint context later.
-    *   **Strategy:** Use the Java fixture project (`test/fixtures/java-spring-test-project`). Tests will need to mock the underlying mechanism used for finding annotations (e.g., `vscode.commands.executeCommand` for LSP symbol search, or `vscode.workspace.findFiles` + file parsing).
+    *   **Strategy:** Use the Java fixture project (`test/fixtures/java-spring-test-project`). Tests will need to mock the underlying mechanism used for finding annotations. **We will prioritize using the Java Language Server Protocol (LSP) via `vscode.commands.executeCommand` calls (e.g., `vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider`, potentially others specific to the Java extension) to find symbols and their annotations.** Mocks will simulate the responses from these commands.
     *   **Test Categories & Cases (Ensure Fixtures Exist):**
         *   **Basic Discovery & HTTP Methods:**
             *   Find `@GetMapping` combined with class-level `@RequestMapping`.
@@ -56,10 +79,12 @@
 **Next Steps:**
 
 2.  **Endpoint Discovery and Disambiguation:**
-    *   **Discover All Endpoints:** Implement logic (in `src/endpoint-discovery.ts` function `discoverEndpoints`) to find *all* Spring Boot REST endpoints within the workspace. Consider two main approaches:
-        *   **Approach 1: LSP-based:** Use `vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', query)` with queries targeting annotations like `@RestController`, `@GetMapping`, etc. (Relies on Java Language Support extension).
-        *   **Approach 2: Manual Parsing:** Use `vscode.workspace.findFiles('**/*.java')` to get all Java files and then parse their content (e.g., using regex or a parser library) to find relevant annotations and construct paths.
-    *   Create a structured list of found endpoints, including method, path, and source location (URI and position). Example: `[{ method: 'POST', path: '/api/users', uri: vscode.Uri, position: vscode.Position, description: 'Creates a new user' /* Optional: extracted from Javadoc/comments */ }, ...] `.
+    *   **Discover All Endpoints:** Implement logic (in `src/endpoint-discovery.ts` function `discoverEndpoints`) to find *all* Spring Boot REST endpoints within the workspace using the installed Java Language Support extension.
+        *   **Primary Approach: LSP-based:** Use `vscode.commands.executeCommand` with relevant commands provided by the Java extension. This will likely involve:
+            *   Finding potential controller classes and endpoint methods using symbol providers (e.g., `'vscode.executeWorkspaceSymbolProvider'`, `'vscode.executeDocumentSymbolProvider'`). Query patterns might target annotations like `@RestController`, `@GetMapping`, etc., or broader searches filtered later.
+            *   Extracting specific annotation details (like `path`, `value`, `method` attributes) from the found symbols. This might require additional LSP calls (e.g., requesting hover information, code actions, or custom commands provided by the Java extension) to get the necessary attribute values associated with the annotations.
+        *   *(Manual parsing using `vscode.workspace.findFiles` and regex/parsers is discouraged due to complexity and fragility and should only be considered as a last resort if LSP proves insufficient.)*
+    *   Create a structured list of found endpoints, including method, path, and source location (URI and position). Example: `[{ method: 'POST', path: '/api/users', uri: vscode.Uri, position: vscode.Position, handlerMethodName: 'createUser', description: 'Creates a new user' /* Optional: extracted from Javadoc/comments */ }, ...] `.
     *   **Identify Target Endpoint:** Use the `naturalLanguageQuery` from step 1 to identify the most likely target endpoint from the discovered list. This may involve:
         *   Simple keyword matching between the query and the endpoint paths/methods/descriptions.
         *   Potentially using an LLM (via a dedicated tool or API call) to perform semantic matching between the user's query and the list of available endpoints, asking it to return the best match(es).
@@ -145,4 +170,4 @@
     *   Simplified command structure to focus on diagram-related functionality
 
 8.  **Tool Implementation:**
-    *   Implemented proper tool classes with `
+    *   Implemented proper tool classes with

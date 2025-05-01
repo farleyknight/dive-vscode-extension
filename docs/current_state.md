@@ -73,7 +73,10 @@
     - Helper scripts `test/runTest.ts` (main runner) and `test/suite/index.ts` (Mocha entry point) manage the test execution process.
 - **Fixtures:**
     - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and `TestController.java` with various REST endpoint annotations, intended for testing endpoint discovery.
-- **Current Status:** Basic test infrastructure is set up and the initial sample test passes. Specific feature tests (like for endpoint discovery) still need to be written.
+    - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and several controller files (`TestController.java`, `UserController.java`, etc.) with a wider range of REST endpoint annotations (`@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, `@RequestMapping`, path variables, etc.), intended for testing endpoint discovery.
+    - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and several controller files (`TestController.java`, `UserController.java`, etc.) with a range of REST endpoint annotations.
+    - The next step is to perform a detailed inventory of these fixtures against the specific test cases outlined in `docs/next_steps.md` to identify coverage gaps before further expansion.
+- **Current Status:** Basic test infrastructure is set up. Fixtures exist but require systematic review (inventory step added to `next_steps.md`). Specific feature tests (E2E LSP investigation, endpoint discovery unit tests) are pending this inventory and subsequent fixture updates.
 - **Debugging LSP Interactions:** The E2E tests (`src/test/suite/e2e.test.ts`) are useful for debugging interactions with the Java Language Server. By running the tests (`npm test`), you can observe the console output, which logs the requests made to the LSP (e.g., `vscode.executeWorkspaceSymbolProvider`) and the responses received. This helps verify if the LSP is running correctly and providing the expected symbols. For example, successful symbol discovery looks like this:
 
   ```

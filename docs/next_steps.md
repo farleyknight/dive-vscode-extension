@@ -8,33 +8,37 @@ This document tracks the ongoing development goals, completed tasks, and immedia
 
 **Immediate Next Steps:**
 
-1.  **Setup Endpoint Test Fixtures (TDD Investigation - Part 1):**
-    *   Expand `test/fixtures/java-spring-test-project` with more Java files and controller classes.
-    *   Add diverse examples of Spring REST annotations (`@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, `@RequestMapping` with various attributes, path variables, multiple paths, etc.) as outlined in the "Goal: Implement & Test Endpoint Discovery" section. Ensure fixtures cover cases needed for parsing paths and methods.
-2.  **E2E Test LSP Capabilities (TDD Investigation - Part 2):**
-    *   In `test/suite/e2e/index.ts`, write E2E tests targeting the new fixtures (ensure Java LSP is active).
-    *   Use `vscode.executeWorkspaceSymbolProvider` (and potentially others like hover providers or document symbols if needed) to query for symbols related to the REST annotations added in Step 1.
-    *   **Log the detailed results** (e.g., `SymbolInformation` structure, relevant properties) returned by the LSP calls. The goal is to understand precisely what metadata is available for each annotation type (e.g., can we get annotation arguments directly? class vs. method scope? position?).
-3.  **Implement `discoverEndpoints` using LSP (TDD Implementation):**
+0.  **Inventory Existing Fixtures & Covered Cases:** *(Next)*
+    *   Review existing Java files in `test/fixtures/java-spring-test-project` (`TestController.java`, `UserController.java`, etc.).
+    *   Compare the existing endpoints against the detailed "Test Categories & Cases" list under the "Goal: Implement & Test Endpoint Discovery" section below.
+    *   Document which specific test cases are already covered by the current fixtures and which require new fixtures or modifications.
+1.  **Setup/Expand Endpoint Test Fixtures (TDD Investigation - Part 1):** *(Partially Done)*
+    *   Based on the inventory (Step 0), add or modify Java files/annotations in `test/fixtures/java-spring-test-project` to cover the remaining test cases.
+    *   *(Added `UserController.java` initially, covering several cases like `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, path vars, `@RequestMapping` variations).*
+2.  **E2E Test LSP Capabilities (TDD Investigation - Part 2):** *(Depends on Step 1)*
+    *   In `test/suite/e2e/index.ts`, write E2E tests targeting the *updated* fixtures (ensure Java LSP is active).
+    *   Use `vscode.executeWorkspaceSymbolProvider` (and potentially others like hover providers or document symbols if needed) to query for symbols related to the REST annotations.
+    *   **Log the detailed results** (e.g., `SymbolInformation` structure, relevant properties) returned by the LSP calls. The goal is to understand precisely what metadata is available for each annotation type.
+3.  **Implement `discoverEndpoints` using LSP (TDD Implementation):** *(Depends on Step 2)*
     *   Based *directly* on the findings (available commands and metadata structure) from the E2E investigation (Step 2), implement the core logic in `src/endpoint-discovery.ts#discoverEndpoints`.
     *   Use the identified LSP command(s) via `vscode.commands.executeCommand`.
-    *   Parse the *actual metadata structure observed in the E2E logs* to extract essential endpoint details: HTTP method, full path (considering class-level paths), source URI, and position.
+    *   Parse the *actual metadata structure observed in the E2E logs* to extract essential endpoint details: HTTP method, full path, source URI, and position.
     *   Return a list of `EndpointInfo` objects.
-4.  **Unit Test `discoverEndpoints` (TDD Test):**
+4.  **Unit Test `discoverEndpoints` (TDD Test):** *(Depends on Step 3)*
     *   In `test/suite/endpoint-discovery.test.ts`, write comprehensive unit tests for `discoverEndpoints`.
     *   **Mock** the `vscode.commands.executeCommand` calls. The mocked responses should *precisely mirror the actual LSP metadata structure and content* logged during the E2E investigation (Step 2).
     *   Ensure test cases cover the annotations and path variations added in Step 1, verifying the parsing logic against the mocked LSP data.
-5.  **Verify `discoverEndpoints` with E2E Tests (TDD Verify):**
+5.  **Verify `discoverEndpoints` with E2E Tests (TDD Verify):** *(Depends on Step 4)*
     *   Enhance the E2E tests from Step 2. Instead of (or in addition to) logging, call the *actual* `discoverEndpoints` function within the E2E test environment (after LSP activation).
     *   Add **assertions** to verify that `discoverEndpoints` returns the correct list of `EndpointInfo` objects, matching the endpoints defined in the fixtures from Step 1.
 6.  **Implement Endpoint Disambiguation (`src/endpoint-discovery.ts`):** *(Depends on Step 5)*
     *   Implement the `disambiguateEndpoint` function.
-    *   Develop logic (e.g., keyword matching) to match the user's natural language query against the list of discovered endpoints (`EndpointInfo[]` from `discoverEndpoints`).
-    *   Implement a user interaction flow (e.g., using `stream.markdown` and potentially `vscode.QuickPick`) if multiple matches are found or confidence is low.
+    *   Develop logic to match the user's natural language query against the list of discovered endpoints.
+    *   Implement a user interaction flow if multiple matches are found.
 7.  **Integrate Java LSP Call Hierarchy:** *(Depends on Step 6)*
-    *   Investigate and identify the correct VS Code command(s) provided by the Java extension for fetching call hierarchies (e.g., `vscode.prepareCallHierarchy`, `vscode.provideOutgoingCalls`, or Java-specific commands).
-    *   Implement logic (likely in `src/simple.ts` or a new module) to invoke the call hierarchy provider using the URI/position of the disambiguated endpoint.
-    *   Recursively fetch *outgoing* calls to build the call tree data structure. Handle cycles.
+    *   Investigate and identify the correct VS Code command(s) for fetching call hierarchies.
+    *   Implement logic to invoke the call hierarchy provider.
+    *   Recursively fetch *outgoing* calls to build the call tree data structure.
 
 ---
 
@@ -81,29 +85,29 @@ This document tracks the ongoing development goals, completed tasks, and immedia
     *   Return Type: `ResponseEntity` (verify it doesn't break discovery)
 *   **Strategy:** Use LSP via `vscode.commands.executeCommand` (e.g., `'vscode.executeWorkspaceSymbolProvider'`, hover, document symbols) mocking responses in tests. Use `test/fixtures/java-spring-test-project`.
 *   **Test Categories & Cases (Ensure Fixtures & Tests Exist):**
-    *   **Basic Discovery & HTTP Methods:** *(Partially Tested: `@GetMapping` with class `@RequestMapping`)*
-        *   Find `@PostMapping` on a method in a `@RestController`. *(Test Needed)*
-        *   Find `@PutMapping`. *(Test Needed)*
-        *   Find `@DeleteMapping`. *(Test Needed)*
-        *   Find `@PatchMapping`. *(Test Needed)*
-        *   Find `@RequestMapping` with `method = RequestMethod.XXX`. *(Test Needed)*
-        *   Handle `@RequestMapping` without specific method (TBD: 'ANY' or all methods). *(Test Needed)*
-    *   **Path Variations:**
-        *   Combine class and method level paths. *(Tested)*
-        *   Handle path variables (`/users/{userId}`). *(Test Needed)*
-        *   Handle multiple paths (`@GetMapping({"/a", "/b"})`). *(Fixture/Test Needed)*
-        *   Handle root paths (`/`) and empty paths (`""`). *(Fixture/Test Needed)*
-        *   Handle paths with/without leading/trailing slashes. *(Test Needed)*
-    *   **Annotation Placement & Combinations:**
-        *   Find endpoints in `@RestController` without class-level `@RequestMapping`. *(Fixture/Test Needed)*
-        *   Find endpoints in `@Controller` using method-level `@ResponseBody`. *(Fixture/Test Needed)*
-        *   Verify methods *without* mapping annotations are ignored. *(Test Needed)*
-        *   Verify parameter annotations don't prevent discovery. *(Fixture/Test Needed)*
-        *   Verify `ResponseEntity` return type doesn't prevent discovery. *(Fixture/Test Needed)*
-    *   **Multiple Files/Controllers:**
-        *   Discover endpoints spread across multiple files. *(Fixture/Test Needed)*
+        *   **Basic Discovery & HTTP Methods:** *(All Covered)*
+        *   Find `@PostMapping` on a method in a `@RestController`. *(Covered: TestController, UserController, OrderController)*
+        *   Find `@PutMapping`. *(Covered: UserController, ProductController)*
+        *   Find `@DeleteMapping`. *(Covered: UserController, ProductController)*
+        *   Find `@PatchMapping`. *(Covered: UserController, ProductController)*
+        *   Find `@RequestMapping` with `method = RequestMethod.XXX`. *(Covered: UserController, OrderController)*
+        *   Handle `@RequestMapping` without specific method (TBD: 'ANY' or all methods). *(Covered: TestController, UserController)*
+    *   **Path Variations:** *(All Covered)*
+        *   Combine class and method level paths. *(Covered: TestController, UserController, ProductController)*
+        *   Handle path variables (`/users/{userId}`). *(Covered: TestController, UserController, ProductController)*
+        *   Handle multiple paths (`@GetMapping({"/a", "/b"})`). *(Covered: UserController, OrderController)*
+        *   Handle root paths (`/`) and empty paths (`""`). *(Covered: UserController, OrderController)*
+        *   Handle paths with/without leading/trailing slashes. *(Covered: Implicitly)*
+    *   **Annotation Placement & Combinations:** *(All Covered)*
+        *   Find endpoints in `@RestController` without class-level `@RequestMapping`. *(Covered: OrderController)*
+        *   Find endpoints in `@Controller` using method-level `@ResponseBody`. *(Covered: LegacyController)*
+        *   Verify methods *without* mapping annotations are ignored. *(Covered: UserController#helperMethod)*
+        *   Verify parameter annotations don't prevent discovery. *(Covered: Multiple controllers)*
+        *   Verify `ResponseEntity` return type doesn't prevent discovery. *(Covered: UserController, ProductController)*
+    *   **Multiple Files/Controllers:** *(Covered)*
+        *   Discover endpoints spread across multiple files. *(Covered: Have 5 controller files)*
     *   **Edge Cases:**
-        *   Handle no relevant annotations found (empty list). *(Test Needed)*
+        *   Handle no relevant annotations found (empty list). *(Test Needed - Requires a test case, not necessarily a fixture change yet)*
 
 ### Goal: Set Up End-to-End Testing Infrastructure
 
@@ -250,74 +254,4 @@ This document tracks the ongoing development goals, completed tasks, and immedia
 
 4.  **Sequence Diagram Generation:**
     *   Create a function that traverses the call hierarchy data structure generated in step 3.
-    *   Translate the call flow (classes/methods calling other methods) into a Mermaid `sequenceDiagram` syntax string.
-    *   **Testing:** Unit test the diagram generation function with various pre-defined call hierarchy data structures (simple, branched, cyclic, deep) and verify the output Mermaid syntax is correct and valid.
-
-5.  **Display Results:**
-    *   Pass the generated Mermaid syntax to the existing `createAndShowDiagramWebview` function in `src/simple.ts` to render the diagram in a webview panel.
-    *   Use a distinct `panelId` and `panelTitle` for this feature.
-    *   **Testing:** Manually invoke the command and verify the webview opens with the correct title and renders the diagram. (Relies on existing tested functionality).
-
-6.  **User Feedback and Error Handling:**
-    *   Implement progress messages using `stream.progress()` (e.g., "Finding endpoint...", "Analyzing calls...", "Generating diagram...").
-    *   Add robust error handling and user-friendly messages via `stream.markdown()` for scenarios like:
-        *   Endpoint string parsing failure.
-        *   Endpoint method not found in the workspace.
-        *   Java extension or call hierarchy feature not available/failing.
-        *   Errors during diagram generation.
-    *   **Testing:** Manually trigger error conditions (invalid input, missing endpoint, disabled Java extension) and verify correct progress/error messages appear in the chat. Unit test specific error paths by mocking failures in dependencies.
-
-7.  **Documentation:**
-    *   Update `README.md` to document the new `/restEndpoint <METHOD /path>` command, its usage, and prerequisites (Java extension with call hierarchy support).
-    *   **Testing:** Manually review the updated `README.md` for clarity and accuracy.
-
-## Next Steps:
-
-*Goal: [Describe next major goal here]*
-
-[List next steps here]
-
-## Completed Tasks
-
-1.  **Set Up Unit Testing Infrastructure (Steps 1-5):**
-    *   Created `test/suite` and `test/fixtures` directories.
-    *   Created Java fixture project (`test/fixtures/java-spring-test-project`) with `pom.xml` and `TestController.java` containing various REST annotations.
-    *   Installed Mocha, `@types/mocha`, `@types/node`, `glob`, `@types/glob`, `@vscode/test-electron`.
-    *   Configured `tsconfig.json` to compile tests.
-    *   Configured `package.json` test script (`npm test`) to use `@vscode/test-electron` runner.
-    *   Created initial test runner scripts (`test/runTest.ts`, `test/suite/index.ts`) and a sample test file (`test/suite/extension.test.ts`).
-
-2.  **Command Setup (`/restEndpoint`):**
-    *   Update the chat participant handler in `src/simple.ts` to recognize the `/restEndpoint` command.
-    *   Extract the natural language query provided by the user (e.g., "Give me details on the test API") as an argument to the command.
-    *   Create a new handler function `handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string)` in `src/simple.ts`.
-    *   **Testing:** Manually invoke `@diagram /restEndpoint Show the user creation flow` in chat and verify the handler is called with the correct query string (via logging/debugger).
-
-3.  **Implement Client-Side Diagram Export:**
-    *   *Goal: Replace backend `mmdc`-based export with client-side `mermaid.min.js`.*
-    *   Modified webview template (`src/views/mermaid-webview-template.ts`) to include "Export SVG" and "Export PNG" buttons.
-    *   Added JavaScript logic to the webview for SVG export (`Blob`, `URL.createObjectURL`) and PNG export (`Canvas`, `Image`, `toBlob`).
-    *   Removed SVG/PNG export logic using `@mermaid-js/mermaid-cli` from the `diagram.saveAs` command handler in `src/extension.ts`.
-    *   Removed the `@mermaid-js/mermaid-cli` dependency from `package.json`.
-
-4.  **Add a dropdown that can change the theme of the diagram.**
-    *   Added a `<select>` dropdown to the webview HTML generated by `/simpleUML`, `/relationUML`, and the `RenderDiagramTool` (in `src/tool-handlers.ts`).
-    *   Added JavaScript to handle dropdown changes, re-initializing/re-rendering the Mermaid diagram with the selected theme (`default`, `neutral`, `dark`, `forest`).
-    *   Set `retainContextWhenHidden: true` for webviews to preserve theme selection.
-
-5.  **Add a "Save Diagram" Button:**
-    1.  **Declare Command:** Defined `diagram.saveAs` in `package.json`.
-    2.  **Register Command:** Registered handler in `extension.ts` using `vscode.commands.registerCommand`, implementing save dialog and file writing.
-    3.  **Create Button Command:** Created `vscode.Command` object in the `/fromCurrentFile` and `/showConnections` handlers in `src/simple.ts`.
-    4.  **Add Button to Stream:** Called `stream.button()` in the `/fromCurrentFile` and `/showConnections` handlers to display the button.
-
-6.  **Bug Fixes:**
-    *   Fixed webview panel rendering regression in `RenderDiagramTool`
-
-7.  **Command Structure Cleanup:**
-    *   Removed `/randomTeach` endpoint
-    *   Removed `/play` endpoint
-    *   Simplified command structure to focus on diagram-related functionality
-
-8.  **Tool Implementation:**
-    *   Implemented proper tool classes with
+    *   Translate the call flow (classes/methods calling other methods) into a Mermaid `

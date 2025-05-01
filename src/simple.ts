@@ -5,6 +5,7 @@ import { TextDecoder } from 'util'; // Import TextDecoder for Uint8Array convers
 import { getMermaidWebviewHtml } from './views/mermaid-webview-template'; // Added import
 import { JSDOM } from 'jsdom';
 import createDOMPurify from 'dompurify';
+// Removed incorrect imports for utils and RenderDiagramTool
 
 // Define constants locally
 const DIAGRAM_NAMES_COMMAND_ID = 'diagram.namesInEditor';
@@ -345,6 +346,21 @@ Please generate a Mermaid sequence diagram (\`sequenceDiagram\`) showing the cal
     return { metadata: { command: 'sequence' } };
 }
 
+// Handler for /restEndpoint command
+async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
+	const { stream, logger } = params;
+	logger.logUsage('request', { kind: 'restEndpoint', status: 'started' });
+	stream.progress("Handling /restEndpoint command..."); // Initial progress
+
+	// TODO: Implement endpoint discovery, disambiguation, call hierarchy analysis, and diagram generation
+
+	stream.markdown(`Received request for /restEndpoint with query: "${naturalLanguageQuery}"`);
+	logger.logUsage('request', { kind: 'restEndpoint', status: 'processed' }); // Log basic processing for now
+
+	// Return metadata indicating the command was handled
+	return { metadata: { command: 'restEndpoint' } };
+}
+
 // Helper function to create and show the diagram webview panel
 async function createAndShowDiagramWebview(
     extensionContext: vscode.ExtensionContext,
@@ -637,13 +653,23 @@ export function registerSimpleParticipant(extensionContext: vscode.ExtensionCont
                 return handleRelationUML(params); // Pass the full params
             } else if (request.command === 'sequence') {
                 return handleSequenceDiagram(params); // Add routing for sequence
+            } else if (request.command === 'restEndpoint') {
+                // Extract the natural language query after the command
+                // Assumes format: /restEndpoint Some natural language query
+                const naturalLanguageQuery = request.prompt.trim();
+                if (!naturalLanguageQuery) {
+                    stream.markdown('Please provide a query after the `/restEndpoint` command. For example: `/restEndpoint Show the user creation flow`');
+                    return { metadata: { command: 'restEndpoint' } };
+                } else {
+                    return handleRestEndpoint(params, naturalLanguageQuery);
+                }
             } else {
                 // Default handler might only need stream/logger
                 return handleDefaultCommand({ stream, logger });
             }
         } catch (err) {
             handleError(logger, err, stream);
-            return { metadata: { command: request.command || 'error' } };
+            return { metadata: { command: request.command || 'unknown_error' } };
         }
     };
 

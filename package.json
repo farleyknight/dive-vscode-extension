@@ -39,6 +39,10 @@
 					{
 						"name": "sequence",
 						"description": "Generate a sequence diagram from the current file's code"
+					},
+					{
+						"name": "restEndpoint",
+						"description": "Generate a sequence diagram for a Java Spring Boot REST endpoint"
 					}
 				],
 				"disambiguation": [

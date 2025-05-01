@@ -6,22 +6,27 @@
 
 1.  **Command Setup (`/restEndpoint`):**
     *   Update the chat participant handler in `src/simple.ts` to recognize the `/restEndpoint` command.
-    *   Extract the endpoint identifier (e.g., "GET /api/users") provided by the user as an argument to the command.
-    *   Create a new handler function `handleRestEndpoint(params: CommandHandlerParams, endpointString: string)` in `src/simple.ts`.
-    *   Parse `endpointString` to get the HTTP method and path pattern.
-    *   **Testing:** Manually invoke `@dive /restEndpoint GET /api/test` in chat and verify the handler is called (via logging/debugger). Unit test the endpoint string parsing logic.
+    *   Extract the natural language query provided by the user (e.g., "Give me details on the test API") as an argument to the command.
+    *   Create a new handler function `handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string)` in `src/simple.ts`.
+    *   **Testing:** Manually invoke `@dive /restEndpoint Show the user creation flow` in chat and verify the handler is called with the correct query string (via logging/debugger).
 
-2.  **Endpoint Method Location:**
-    *   Implement workspace searching logic (e.g., using `vscode.workspace.findFiles('**/*.java')`) to find potential controller files.
-    *   Within Java files, parse or use LSP symbols (`vscode.executeCommand('vscode.executeWorkspaceSymbolProvider', query)`) to find method definitions annotated with Spring REST annotations (e.g., `@GetMapping`, `@PostMapping`).
-    *   Match the annotations' paths and methods against the user-provided `endpointString` to pinpoint the exact `vscode.Uri` and `vscode.Position` of the target endpoint method. Handle path variables appropriately.
-    *   **Testing:** Unit test the file searching and annotation matching logic against mock Java files. Manually test against a real Spring Boot project to ensure it finds the correct method location for various endpoints.
+2.  **Endpoint Discovery and Disambiguation:**
+    *   **Discover All Endpoints:** Implement logic to find *all* Spring Boot REST endpoints within the workspace. This could involve:
+        *   Using Java LSP features (e.g., `vscode.executeWorkspaceSymbolProvider` searching for annotations like `@RestController`, `@RequestMapping`, `@GetMapping`, etc.).
+        *   Alternatively, using `vscode.workspace.findFiles('**/*.java')` and parsing files to find these annotations directly.
+    *   Create a structured list of found endpoints, including method, path, and source location (URI and position). Example: `[{ method: 'POST', path: '/api/users', uri: vscode.Uri, position: vscode.Position, description: 'Creates a new user' /* Optional: extracted from Javadoc/comments */ }, ...] `.
+    *   **Identify Target Endpoint:** Use the `naturalLanguageQuery` from step 1 to identify the most likely target endpoint from the discovered list. This may involve:
+        *   Simple keyword matching between the query and the endpoint paths/methods/descriptions.
+        *   Potentially using an LLM (via a dedicated tool or API call) to perform semantic matching between the user's query and the list of available endpoints, asking it to return the best match(es).
+        *   If multiple potential matches are found or the confidence is low, interact with the user (e.g., `stream.markdown('Did you mean GET /api/test or POST /api/tests?')`) to confirm the correct endpoint.
+    *   Once a single endpoint is confidently identified, store its `vscode.Uri` and `vscode.Position`.
+    *   **Testing:** Unit test endpoint discovery logic. Unit test the disambiguation logic with various queries and mock endpoint lists. Manually test against a real Spring Boot project with diverse endpoints and natural language queries.
 
 3.  **Java LSP Call Hierarchy Integration:**
     *   Identify the correct VS Code command provided by the installed Java extension for fetching call hierarchies (e.g., `vscode.prepareCallHierarchy`, `java.showCallHierarchy`, followed by `vscode.provideOutgoingCalls`). This might require checking the Java extension's contributions.
-    *   Use `vscode.commands.executeCommand` to invoke the call hierarchy provider with the URI and position found in step 2.
+    *   Use `vscode.commands.executeCommand` to invoke the call hierarchy provider with the specific URI and position identified in step 2.
     *   Recursively fetch *outgoing* calls (`vscode.provideOutgoingCalls`) to build a data structure (like a tree or graph) representing the call flow from the endpoint method down to a reasonable depth (e.g., 3-5 levels). Handle cycles gracefully.
-    *   **Testing:** Unit test the recursive call fetching and data structure building logic by mocking `vscode.commands.executeCommand`. Manually test against a real Spring Boot project with a known call structure and verify the resulting diagram accuracy.
+    *   **Testing:** Unit test the recursive call fetching and data structure building logic by mocking `vscode.commands.executeCommand`. Manually test against a real Spring Boot project (using an endpoint confirmed in step 2) with a known call structure and verify the resulting diagram accuracy.
 
 4.  **Sequence Diagram Generation:**
     *   Create a function that traverses the call hierarchy data structure generated in step 3.
@@ -80,48 +85,4 @@
     *   Simplified command structure to focus on diagram-related functionality
 
 5.  **Tool Implementation:**
-    *   Implemented proper tool classes with `vscode.LanguageModelTool` interface
-    *   Created `GetCodeContextTool` and `RenderDiagramTool` classes
-    *   Fixed tool result handling with proper types
-    *   Added tool registration in `src/diagram-tools.ts`
-
-6.  **Auto-Detection of Diagram Type:**
-    *   Updated prompts and tool handling to automatically detect appropriate diagram types
-    *   Implemented code analysis for diagram type selection
-    *   Added requirement for model to explain diagram type choices
-
-7.  **Documentation Updates:**
-    *   Updated README.md to reflect new diagram-focused functionality
-    *   Added documentation for `/fromCurrentFile` command
-    *   Updated current state and next steps documentation
-
-8.  **Connection Visualization:**
-    *   Implemented `/showConnections` command to show object relationships
-    *   Added support for inheritance, composition, and aggregation relationships
-    *   Enhanced diagram generation to include related objects and their connections
-    *   Added dark mode support for connection diagrams
-
-9.  **Implement PNG/SVG Rendering for Save:**
-    *   Integrated the Mermaid CLI (`mmdc`) via `@mermaid-js/mermaid-cli` dev dependency.
-    *   Modified the `diagram.saveAs` command handler in `src/extension.ts` to render PNG/SVG using `mmdc`.
-    *   Writes image data for `.png` and `.svg` extensions.
-    *   Added error handling for `mmdc` execution (not found, rendering errors).
-    *   Checks for `mmdc` existence before attempting render.
-
-10. **Improved Save Diagram Functionality:**
-    *   Used the Mermaid CLI (`mmdc`) to convert diagrams to SVG/PNG on save.
-    *   Checked if `mmdc` is installed; prompt user if not.
-    *   Handled `.svg`, `.png`, `.mmd`, and `.md` file extensions during save.
-    *   Used `child_process` to run `mmdc`.
-    *   Added error handling for the conversion process.
-
-### 3. Add Export/Save Functionality
-
-*Goal: Allow users to save the generated Mermaid diagrams in various formats.* Currently implemented for diagrams generated via `/simpleUML`, `/relationUML`, and `/sequence` command (via the `renderDiagram` tool).
-
-1.  **Define Export Formats:** Decided on `.mmd` (raw syntax), `.md` (Markdown code block), `.svg`, and `.png`.
-2.  **Webview Controls:**
-    *   Added an "Export Diagram" button/dropdown to the webview HTML (`src/views/mermaid-webview-template.ts`).
-    *   The dropdown lists the export formats (SVG, PNG, MMD, MD).
-    *   Added JavaScript in the webview to handle button clicks/dropdown selections and send a `postMessage` back to the extension with the desired format, current theme, and the original Mermaid syntax.
-3.  **Register `
+    *   Implemented proper tool classes with `

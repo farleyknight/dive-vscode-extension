@@ -1,3 +1,18 @@
+## Goal: Set Up Unit Testing Infrastructure
+
+*   **Goal:** Establish a unit testing framework (e.g., Mocha) and create initial test fixtures, including a simple Java Spring Boot project, to enable testing of features like endpoint discovery.
+
+**Next Steps:**
+
+1.  **Create Test Directory Structure:** Set up `test/suite` and `test/fixtures` directories.
+2.  **Create Java Fixture Project:** Create a minimal Maven-based Spring Boot project in `test/fixtures/java-spring-test-project` with a basic controller containing various REST endpoint annotations (`@RestController`, `@GetMapping`, `@PostMapping`, path variables, etc.).
+3.  **Install Testing Dependencies:** Add development dependencies for a testing framework like Mocha and its type definitions (`mocha`, `@types/mocha`, `@types/node`).
+4.  **Configure Test Runner:** Configure `package.json` with a test script to run Mocha tests (e.g., `"test": "mocha"`). Set up necessary configuration for TypeScript tests (e.g., `tsconfig.json` for tests or using `ts-node`).
+5.  **Write Initial Test:** Write a basic test case in `test/suite` (e.g., `endpoint-discovery.test.ts`) to verify the testing setup is working.
+6.  **Test Endpoint Discovery:** Write unit tests for `src/endpoint-discovery.ts`'s `discoverEndpoints` function, using the Java fixture project. Mock `vscode.commands.executeCommand` to return appropriate symbols based on the fixture.
+
+---
+
 ## New Feature: `/restEndpoint` Diagram Generation
 
 *   **Goal:** Allow users to generate a sequence diagram visualizing the call hierarchy for a specified Java Spring Boot REST endpoint using the Java LSP.

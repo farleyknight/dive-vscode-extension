@@ -5,6 +5,7 @@ import { TextDecoder } from 'util'; // Import TextDecoder for Uint8Array convers
 import { getMermaidWebviewHtml } from './views/mermaid-webview-template'; // Added import
 import { JSDOM } from 'jsdom';
 import createDOMPurify from 'dompurify';
+import { discoverEndpoints, disambiguateEndpoint } from './endpoint-discovery'; // Added import
 // Removed incorrect imports for utils and RenderDiagramTool
 
 // Define constants locally
@@ -348,17 +349,58 @@ Please generate a Mermaid sequence diagram (\`sequenceDiagram\`) showing the cal
 
 // Handler for /restEndpoint command
 async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
-	const { stream, logger } = params;
-	logger.logUsage('request', { kind: 'restEndpoint', status: 'started' });
-	stream.progress("Handling /restEndpoint command..."); // Initial progress
+    const { stream, token, logger } = params;
+    logger.logUsage('request', { kind: 'restEndpoint', status: 'started', query: naturalLanguageQuery });
+    const startTime = Date.now();
 
-	// TODO: Implement endpoint discovery, disambiguation, call hierarchy analysis, and diagram generation
+    try {
+        stream.progress("Discovering REST endpoints...");
+        const allEndpoints = await discoverEndpoints(token); // Call discovery function
 
-	stream.markdown(`Received request for /restEndpoint with query: "${naturalLanguageQuery}"`);
-	logger.logUsage('request', { kind: 'restEndpoint', status: 'processed' }); // Log basic processing for now
+        if (token.isCancellationRequested) {
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
+            return { metadata: { command: 'restEndpoint' } };
+        }
 
-	// Return metadata indicating the command was handled
-	return { metadata: { command: 'restEndpoint' } };
+        if (!allEndpoints || allEndpoints.length === 0) {
+            // Message is handled within discoverEndpoints or disambiguateEndpoint if it returns early
+             if (allEndpoints && allEndpoints.length === 0) { // Only log if discovery succeeded but found nothing
+                stream.markdown("I couldn't find any REST endpoints in this workspace.");
+            }
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'no_endpoints_found', duration: Date.now() - startTime });
+            return { metadata: { command: 'restEndpoint' } };
+        }
+
+        stream.progress(`Found ${allEndpoints.length} endpoints. Identifying target...`);
+
+        // Call disambiguation function
+        const targetEndpoint = await disambiguateEndpoint(naturalLanguageQuery, allEndpoints, stream, token);
+
+        if (token.isCancellationRequested) {
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
+            return { metadata: { command: 'restEndpoint' } };
+        }
+
+        if (!targetEndpoint) {
+            // Message handled within disambiguateEndpoint
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'disambiguation_failed', duration: Date.now() - startTime });
+            return { metadata: { command: 'restEndpoint' } };
+        }
+
+        stream.progress(`Target endpoint identified: ${targetEndpoint.method} ${targetEndpoint.path}. Analyzing call hierarchy...`);
+
+        // TODO: Implement Step 3: Java LSP Call Hierarchy Integration using targetEndpoint.uri and targetEndpoint.position
+        stream.markdown(`Okay, I've identified the endpoint: \`${targetEndpoint.method} ${targetEndpoint.path}\` in \`${path.basename(targetEndpoint.uri.fsPath)}\`.`);
+        stream.markdown("Next steps would involve using the Java LSP to find its call hierarchy and generate the sequence diagram. This part is not yet implemented.");
+
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'processed_stub', duration: Date.now() - startTime });
+
+    } catch (err) {
+        handleError(logger, err, stream);
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'error', duration: Date.now() - startTime, error: err instanceof Error ? err.message : String(err) });
+    }
+
+    return { metadata: { command: 'restEndpoint' } };
 }
 
 // Helper function to create and show the diagram webview panel

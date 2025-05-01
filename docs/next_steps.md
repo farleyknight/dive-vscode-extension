@@ -8,13 +8,21 @@ This document tracks the ongoing development goals, completed tasks, and immedia
 
 **Immediate Next Steps:**
 
-0.  **Inventory Existing Fixtures & Covered Cases:** *(Next)*
-    *   Review existing Java files in `test/fixtures/java-spring-test-project` (`TestController.java`, `UserController.java`, etc.).
+*   **Consolidate Test Directories (Highest Priority):**
+    1.  **Analyze Differences:** Compare `src/test` vs `test/` contents (`runTest.ts`, `suite/index.ts`, `suite/e2e.*`). Identify necessary logic in `src/test`.
+    2.  **Consolidate Logic:** Merge required test logic/config from `src/test` into `test/` (specifically `test/suite/e2e/index.ts` and `test/runTest.ts`).
+    3.  **Update Configuration:** Modify `package.json` test scripts to use `test/runTest.ts`. Remove `"src/test/**/*.ts"` from `tsconfig.json` includes.
+    4.  **Verify E2E Tests:** Run E2E tests via `test/runTest.ts` and confirm they pass.
+    5.  **Delete Redundant Directory:** Delete the `src/test` directory.
+    6.  **Update Documentation:** Ensure `docs/testing_infrastructure.md` is accurate.
+
+0.  **Inventory Existing Fixtures & Covered Cases:** *(Completed)*
+    *   Review existing Java files in `test/fixtures/java-spring-test-project` (`TestController.java`, `UserController.java`, `OrderController.java`, `ProductController.java`, `LegacyController.java`).
     *   Compare the existing endpoints against the detailed "Test Categories & Cases" list under the "Goal: Implement & Test Endpoint Discovery" section below.
-    *   Document which specific test cases are already covered by the current fixtures and which require new fixtures or modifications.
-1.  **Setup/Expand Endpoint Test Fixtures (TDD Investigation - Part 1):** *(Partially Done)*
-    *   Based on the inventory (Step 0), add or modify Java files/annotations in `test/fixtures/java-spring-test-project` to cover the remaining test cases.
-    *   *(Added `UserController.java` initially, covering several cases like `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, path vars, `@RequestMapping` variations).*
+    *   Document which specific test cases are already covered by the current fixtures and which require new fixtures or modifications. *(Conclusion: All listed cases are covered except the "no annotations found" edge case, which requires a test but not necessarily new fixtures yet).*
+1.  **Setup/Expand Endpoint Test Fixtures (TDD Investigation - Part 1):** *(Next)*
+    *   Based on the inventory (Step 0), add or modify Java files/annotations in `test/fixtures/java-spring-test-project` to cover the remaining test cases. *(Note: Only the "no annotations found" edge case test is pending, fixtures seem sufficient for now).*
+    *   *(Added `UserController.java` initially, covering several cases like `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, path vars, `@RequestMapping` variations).*\
 2.  **E2E Test LSP Capabilities (TDD Investigation - Part 2):** *(Depends on Step 1)*
     *   In `test/suite/e2e/index.ts`, write E2E tests targeting the *updated* fixtures (ensure Java LSP is active).
     *   Use `vscode.executeWorkspaceSymbolProvider` (and potentially others like hover providers or document symbols if needed) to query for symbols related to the REST annotations.

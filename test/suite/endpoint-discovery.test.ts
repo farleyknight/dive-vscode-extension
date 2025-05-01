@@ -45,21 +45,21 @@ suite('Endpoint Discovery Suite', () => { // Standard suite definition
 				'TestController',
 				vscode.SymbolKind.Class,
 				'com.example.test',
-				new vscode.Location(mockUri, new vscode.Range(new vscode.Position(5, 0), new vscode.Position(17, 1))) // Approximate range for class
+				new vscode.Location(mockUri, new vscode.Range(new vscode.Position(7, 0), new vscode.Position(19, 1))) // Adjusted range
 			),
 			// Symbol for the GET method
 			new vscode.SymbolInformation(
 				'getMethod',
 				vscode.SymbolKind.Method,
 				'TestController',
-				new vscode.Location(mockUri, new vscode.Position(8, 4)) // Position of method name
+				new vscode.Location(mockUri, new vscode.Position(10, 4)) // Adjusted position
 			),
 			// Symbol for the POST method (needed if testing multiple methods)
 			new vscode.SymbolInformation(
 				'postMethod',
 				vscode.SymbolKind.Method,
 				'TestController',
-				new vscode.Location(mockUri, new vscode.Position(13, 4)) // Position of method name
+				new vscode.Location(mockUri, new vscode.Position(15, 4)) // Adjusted position
 			),
 		];
 		executeCommandStub.withArgs('vscode.executeWorkspaceSymbolProvider', '').resolves(mockWorkspaceSymbols);
@@ -115,18 +115,18 @@ public class TestController {
 				method: 'GET',
 				path: '/api/class/method', // Combined path
 				uri: mockUri,
-				position: new vscode.Position(8, 4), // Position of @GetMapping or method name (TBD by implementation)
+				position: new vscode.Position(10, 4), // Position of getMethod start
 				handlerMethodName: 'getMethod'
 			},
 			// TODO: Update test if discoverEndpoints should find multiple methods per file in one pass
 			// Example for POST method:
-			// {
-			//   method: 'POST',
-			//   path: '/api/class/otherMethod',
-			//   uri: mockUri,
-			//   position: new vscode.Position(13, 4), // Position of @PostMapping or method name
-			//   handlerMethodName: 'postMethod'
-			// },
+			{
+			  method: 'POST',
+			  path: '/api/class/otherMethod',
+			  uri: mockUri,
+			  position: new vscode.Position(15, 4), // Position of postMethod start
+			  handlerMethodName: 'postMethod'
+			},
 		];
 
 		// Mock cancellation token
@@ -149,6 +149,23 @@ public class TestController {
 			assert.strictEqual(actualEndpoints[0].handlerMethodName, expectedEndpoints[0].handlerMethodName, "Handler method name mismatch for first endpoint");
 			assert.strictEqual(actualEndpoints[0].uri.toString(), expectedEndpoints[0].uri.toString(), "URI mismatch for first endpoint");
 			assert.deepStrictEqual(actualEndpoints[0].position, expectedEndpoints[0].position, "Position mismatch for first endpoint");
+		}
+
+		if (actualEndpoints.length > 1 && expectedEndpoints.length > 1) {
+			// Assertions for the second endpoint (POST)
+			// Find the POST endpoint (order isn't guaranteed)
+			const postEndpointExpected = expectedEndpoints.find(e => e.method === 'POST');
+			const postEndpointActual = actualEndpoints.find(e => e.method === 'POST');
+			assert.ok(postEndpointExpected, "Expected POST endpoint definition missing in test setup");
+			assert.ok(postEndpointActual, "Actual POST endpoint not found by discovery logic");
+
+			if(postEndpointActual && postEndpointExpected) { // Type guard
+				assert.strictEqual(postEndpointActual.method, postEndpointExpected.method, "Method mismatch for second endpoint");
+				assert.strictEqual(postEndpointActual.path, postEndpointExpected.path, "Path mismatch for second endpoint");
+				assert.strictEqual(postEndpointActual.handlerMethodName, postEndpointExpected.handlerMethodName, "Handler method name mismatch for second endpoint");
+				assert.strictEqual(postEndpointActual.uri.toString(), postEndpointExpected.uri.toString(), "URI mismatch for second endpoint");
+				assert.deepStrictEqual(postEndpointActual.position, postEndpointExpected.position, "Position mismatch for second endpoint");
+			}
 		}
 	});
 

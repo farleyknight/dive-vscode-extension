@@ -2,54 +2,115 @@
 
 This document tracks the ongoing development goals, completed tasks, and immediate next steps for the VS Code extension.
 
+## Immediate Next Task: Create E2E Test for LSP Annotation Discovery
+
+*   **Goal:** Create an End-to-End (E2E) test that uses the Java Language Server Protocol (LSP) to discover all specified Spring Boot REST annotations within a test fixture file.
+*   **Why:** This is a **crucial first step** before refining `discoverEndpoints`. We need to execute LSP commands (e.g., `vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider`, potentially hover/definition providers) against the Java fixtures (`test/fixtures/java-spring-test-project`) and **log the raw results**. Understanding the *exact* structure and content of the LSP responses for REST annotations is essential for parsing them correctly.
+*   **Target Test File:** Implement the test in `test/suite/e2e/index.ts` (or create a dedicated `test/suite/e2e/annotation-discovery.test.ts`).
+*   **Annotations to Discover:**
+    *   `@RestController`
+    *   `@Controller` (including verification of `@ResponseBody` presence if needed)
+    *   `@RequestMapping` (class and method level)
+    *   `@GetMapping`
+    *   `@PostMapping`
+    *   `@PutMapping`
+    *   `@DeleteMapping`
+    *   `@PatchMapping`
+*   **Fixture Verification:** *(Completed)* The existing fixtures in `test/fixtures/java-spring-test-project/src/main/java/com/example/testfixture/` contain examples of all the required annotations. No fixture modification is needed for *this* specific test.
+*   **Test Steps:**
+    1.  Configure `test/runTest.ts` to reliably launch with the Java extension installed and activated.
+    2.  Write test setup to open a relevant Java controller file from the fixtures (e.g., `UserController.java`).
+    3.  Wait for the Java LSP to initialize and be ready.
+    4.  Execute relevant VS Code commands that trigger Java LSP providers (e.g., `vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider` looking for symbols related to annotations or methods). Experiment to find the most effective command(s).
+    5.  **Log the full, raw JSON response** returned by the LSP commands. Assertion is secondary; the primary goal is data gathering.
+*   **Status:** E2E test structure exists (`test/runTest.ts`, fixtures), but the specific LSP interaction test logic is **pending creation**.
+
+---
+
+## `/restEndpoint` Feature: Overall Goal & Remaining Steps
+
+*   **Overall Goal:** Allow users to generate a sequence diagram visualizing the call hierarchy for a specified Java Spring Boot REST endpoint using the Java LSP.
+
+**Remaining Steps (Post-E2E Investigation):**
+
+1.  **Endpoint Discovery and Disambiguation (`src/endpoint-discovery.ts`):** *(Partially Implemented - Blocked by E2E)*
+    *   **Refine `discoverEndpoints`:** Use the insights gained from the E2E LSP annotation discovery test to accurately parse LSP responses and identify all REST endpoints. Create a structured list: `[{ method: string, path: string, uri: vscode.Uri, position: vscode.Position, handlerMethodName: string, description?: string }, ...]`.
+    *   **Implement `disambiguateEndpoint`:** Match the user's natural language query against the discovered endpoints. Handle multiple matches or ambiguity, potentially prompting the user.
+    *   **Unit Tests (`test/suite/endpoint-discovery.test.ts`):** Expand unit tests, mocking LSP responses *precisely* based on E2E findings. Cover all annotation types and path variations. Add test for "no relevant annotations found".
+2.  **Java LSP Call Hierarchy Integration:** *(Not Started)*
+    *   Identify Java extension call hierarchy command(s) (e.g., `vscode.prepareCallHierarchy`, `vscode.provideOutgoingCalls`).
+    *   Implement logic to invoke the command(s) with the selected endpoint's URI/position.
+    *   Build the call hierarchy data structure recursively (outgoing calls).
+    *   Add unit tests mocking `vscode.commands.executeCommand`.
+3.  **Sequence Diagram Generation:** *(Not Started)*
+    *   Create a function to traverse the call hierarchy data.
+    *   Translate the call flow into Mermaid `sequenceDiagram` syntax.
+    *   Add unit tests for the generation logic.
+4.  **Display Results:** *(Partially Done - Dependent)*
+    *   Pass the generated Mermaid syntax to `createAndShowDiagramWebview`.
+5.  **User Feedback and Error Handling:** *(Partially Done - Requires Refinement)*
+    *   Implement specific progress messages (`stream.progress`).
+    *   Refine error handling (`stream.markdown`).
+6.  **Documentation:** *(Future)*
+    *   Update `README.md` and potentially `docs/testing_infrastructure.md`.
+
+---
+
+## Completed Tasks
+
+*(Recent major items)*
+
+1.  **Consolidate Test Directories:** Merged `src/test` logic into `test/`.
+2.  **Set Up Basic Unit/E2E Testing Infrastructure:** Created structure, fixtures, installed dependencies, configured scripts.
+3.  **Command Setup (`/restEndpoint`):** Registered command, created handler `handleRestEndpoint`.
+4.  **Implement Client-Side Diagram Export:** Replaced `mmdc` with client-side JS, added buttons.
+5.  **Add Diagram Theme Dropdown:** Added selector and handling logic.
+6.  **Add "Save Diagram" Button:** Implemented `diagram.saveAs` command.
+7.  **Bug Fixes & Cleanup:** Fixed webview rendering, removed unused commands.
+8.  **Tool Implementation:** Implemented `RenderDiagramTool`, `GenerateMermaidDiagramTool`.
+
+---
+
 ## Current Focus: `/restEndpoint` Diagram Generation
 
-*   **Goal:** Allow users to generate a sequence diagram visualizing the call hierarchy for a specified Java Spring Boot REST endpoint using the Java LSP.
+*   **Overall Goal:** Allow users to generate a sequence diagram visualizing the call hierarchy for a specified Java Spring Boot REST endpoint using the Java LSP.
 
-**Immediate Next Steps:**
+**Status & Remaining Steps:**
 
-*   **Consolidate Test Directories (Highest Priority):**
-    1.  **Analyze Differences:** Compare `src/test` vs `test/` contents (`runTest.ts`, `suite/index.ts`, `test/suite/e2e/index.ts` *if created*). Identify necessary logic in `src/test`.
-    2.  **Consolidate Logic:** Merge required test logic/config from `src/test` into `test/` (specifically `test/suite/index.ts`, `test/runTest.ts`, potentially `test/suite/e2e/index.ts`).
-    3.  **Update Configuration:** Modify `package.json` test scripts to use `test/runTest.ts`. Remove `"src/test/**/*.ts"` from `tsconfig.json` includes.
-    4.  **Verify E2E/Unit Tests:** Run all tests via `test/runTest.ts` and confirm they pass.
-    5.  **Delete Redundant Directory:** Delete the `src/test` directory.
-    6.  **Update Documentation:** Ensure `docs/testing_infrastructure.md` is accurate.
-
-*   **Endpoint Discovery & Implementation (TDD-style):**
-    0.  **Inventory Existing Fixtures & Covered Cases:** *(Completed)*
-        *   Review existing Java files in `test/fixtures/java-spring-test-project`.
-        *   Compare against the "Test Categories & Cases" list.
-        *   Document covered/missing cases. *(Conclusion: All listed cases covered except "no annotations found" edge case test).*
-    1.  **Setup/Expand Endpoint Test Fixtures:** *(Mostly Done - Minor Pending)*
-        *   Add/modify Java files/annotations in `test/fixtures/java-spring-test-project` as needed. *(Note: Only the "no annotations found" edge case test is pending; fixtures seem sufficient for now).*
-    2.  **Implement E2E Test for LSP Capabilities (Investigation):** *(Not Started)*
-        *   Create `test/suite/e2e/index.ts`.
-        *   Write E2E tests targeting fixtures (ensure Java LSP is active).
-        *   Use `vscode.executeWorkspaceSymbolProvider` (and potentially others) to query for symbols related to REST annotations.
-        *   **Log the detailed results** returned by LSP calls to understand available metadata *before* refining `discoverEndpoints`.
-    3.  **Refine/Implement `discoverEndpoints` using LSP (Implementation):** *(Started - Partial Implementation Exists)*
-        *   Based *directly* on the findings from the E2E investigation (Step 2), refine or complete the implementation in `src/endpoint-discovery.ts#discoverEndpoints`.
-        *   *Current implementation uses workspace symbols and basic text parsing; needs verification/refinement based on Step 2 logs.*
-        *   Use identified LSP command(s) via `vscode.commands.executeCommand`.
-        *   Parse the *actual metadata structure observed in the E2E logs* to extract essential endpoint details.
-        *   Return a list of `EndpointInfo` objects.
-    4.  **Unit Test `discoverEndpoints` (Test):** *(Started - Initial Test Exists)*
-        *   In `test/suite/endpoint-discovery.test.ts`, write/expand comprehensive unit tests for `discoverEndpoints`.
-        *   *One initial test mocking LSP calls exists.*
-        *   **Mock** `vscode.commands.executeCommand` calls. Mocked responses should *precisely mirror the actual LSP metadata structure and content* logged during the E2E investigation (Step 2).
-        *   Ensure test cases cover annotations and path variations, verifying parsing logic against the mocked LSP data.
-    5.  **Verify `discoverEndpoints` with E2E Tests (Verify):** *(Pending Step 2 & 3)*
-        *   Enhance/Create E2E tests (from Step 2). Call the *actual* `discoverEndpoints` function within the E2E test environment.
-        *   Add **assertions** to verify `discoverEndpoints` returns the correct `EndpointInfo` list matching fixtures.
-    6.  **Implement Endpoint Disambiguation (`src/endpoint-discovery.ts`):** *(Not Started - Stub Exists)*
-        *   Implement the `disambiguateEndpoint` function.
-        *   Develop logic to match user query against discovered endpoints.
-        *   Implement user interaction flow for multiple matches.
-    7.  **Integrate Java LSP Call Hierarchy:** *(Pending Previous Steps)*
-        *   Investigate and identify VS Code command(s) for fetching call hierarchies.
-        *   Implement logic to invoke the call hierarchy provider.
-        *   Recursively fetch *outgoing* calls.
+1.  **Command Setup (`/restEndpoint`):** *(Completed - See Completed Tasks)*
+2.  **Endpoint Discovery and Disambiguation (`src/endpoint-discovery.ts`):** *(In Progress)*
+    *   **Goal:** Implement/refine `discoverEndpoints` and `disambiguateEndpoint` to find and select Spring Boot REST endpoints using the Java LSP.
+    *   **Status:**
+        *   `discoverEndpoints`: *(Started - Partial Implementation Exists, needs refinement based on E2E LSP investigation)* - Current logic uses workspace symbols and basic text parsing.
+        *   `disambiguateEndpoint`: *(Not Started - Stub Exists)*
+        *   Unit Tests (`test/suite/endpoint-discovery.test.ts`): *(Started - Initial Test Exists, needs expansion)* - Requires mocking LSP responses based on E2E findings.
+        *   E2E Tests (`test/suite/e2e/e2e.test.ts`): *(Started - File Exists, Implementation Pending)* - Needs tests to execute LSP commands (e.g., `vscode.executeWorkspaceSymbolProvider`) against fixtures and log results to inform `discoverEndpoints`.
+    *   **Approach:**
+        *   Use E2E tests (`e2e.test.ts`) to investigate Java LSP capabilities (`executeWorkspaceSymbolProvider`, `executeDocumentSymbolProvider`, etc.) and log the exact metadata returned for REST annotations/symbols in the fixtures (`test/fixtures/java-spring-test-project`).
+        *   Refine `discoverEndpoints` based *directly* on E2E findings to parse the actual LSP response structure.
+        *   Implement `disambiguateEndpoint` logic for matching user query and handling multiple matches.
+        *   Expand unit tests (`endpoint-discovery.test.ts`) using mocks that *precisely mirror* the LSP data structure observed in E2E logs.
+    *   **Test Fixtures & Coverage (`test/fixtures/java-spring-test-project`):**
+        *   *(Inventory Completed)* Fixtures cover most cases for annotations (`@RestController`, `@GetMapping`, etc.) and path variations.
+        *   *(Pending)* Add test case for "no relevant annotations found" edge case.
+    *   **Annotations to Support:** `@RestController`, `@Controller` (+`@ResponseBody`), `@RequestMapping`, `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`. (Verify parameter/return type annotations don't break discovery).
+3.  **Java LSP Call Hierarchy Integration:** *(Next - Depends on Step 2)*
+    *   Identify Java extension call hierarchy command(s) (e.g., `vscode.prepareCallHierarchy`, `vscode.provideOutgoingCalls`).
+    *   Implement logic to call the command(s) with the target endpoint's URI/position.
+    *   Build the call hierarchy data structure recursively (outgoing calls).
+    *   Add unit tests mocking `vscode.commands.executeCommand`.
+4.  **Sequence Diagram Generation:** *(Future)*
+    *   Create a function to traverse the call hierarchy data structure.
+    *   Translate the call flow into Mermaid `sequenceDiagram` syntax.
+    *   Add unit tests for the generation logic.
+5.  **Display Results:** *(Partially Done - Dependent)*
+    *   Pass the generated Mermaid syntax to `createAndShowDiagramWebview`.
+6.  **User Feedback and Error Handling:** *(Partially Done - Requires Refinement)*
+    *   Implement specific progress messages (`stream.progress`) for discovery, analysis, generation.
+    *   Refine error handling (`stream.markdown`) for endpoint-not-found, LSP errors, etc.
+7.  **Documentation:** *(Future)*
+    *   Update `README.md` with usage instructions and prerequisites.
+    *   Update `docs/testing_infrastructure.md` (if necessary, regarding E2E setup).
 
 ---
 
@@ -132,110 +193,6 @@ This document tracks the ongoing development goals, completed tasks, and immedia
         *   Wait for LSP initialization.
         *   Execute Java LSP commands (e.g., `vscode.executeWorkspaceSymbolProvider` querying for `@RestController`).
         *   Log/Assert results.
-
----
-
-## Completed Tasks
-
-*(Moved less relevant items here, kept recent major ones)*
-
-1.  **Set Up Basic Unit Testing Infrastructure:**
-    *   Created `test/suite`, `test/fixtures`, `test/fixtures/java-spring-test-project`.
-    *   Installed Mocha, `@vscode/test-electron`, etc.
-    *   Configured `tsconfig.json`, `package.json` test script.
-    *   Created `test/runTest.ts`, `test/suite/index.ts`, `test/suite/extension.test.ts`, `test/suite/endpoint-discovery.test.ts` (stub).
-2.  **Command Setup (`/restEndpoint`):**
-    *   Registered command, created handler `handleRestEndpoint` in `src/simple.ts`.
-3.  **Implement Client-Side Diagram Export:**
-    *   Replaced `mmdc` backend export with client-side JS in webview.
-    *   Added "Export SVG/PNG" buttons. Removed `mermaid-cli` dependency.
-4.  **Add Diagram Theme Dropdown:**
-    *   Added theme selector to webview, updated JS to handle theme changes.
-5.  **Add "Save Diagram" Button:**
-    *   Implemented `diagram.saveAs` command and added button to relevant chat responses.
-6.  **Bug Fixes & Cleanup:**
-    *   Fixed webview rendering bug.
-    *   Removed unused commands (`/randomTeach`, `/play`).
-7.  **Tool Implementation:**
-    *   Implemented `RenderDiagramTool`, `GenerateMermaidDiagramTool`.
-
----
-
-## Goal: Set Up End-to-End Testing Infrastructure
-
-*   **Goal:** Set up an end-to-end (E2E) testing environment that runs the extension within a real VS Code instance, interacting with a live Java Language Server, to test LSP interactions and observe LSP behavior.
-*   **Status:** **Requires creation of `test/suite/e2e/index.ts` and implementation of LSP query tests.**
-
-**Next Steps:**
-
-1.  **Configure Test Runner (`@vscode/test-electron`):**
-    *   Locate or create `src/test/runTest.ts`.
-    *   Configure it to launch VS Code with a dedicated test workspace.
-    *   Ensure it can specify extensions to install (e.g., a Java LSP extension).
-2.  **Create E2E Test Workspace:**
-    *   Create a directory (e.g., `test-fixtures/e2e-java-project`) containing a minimal Java Spring Boot project.
-    *   Include Java files with annotations relevant to endpoint discovery.
-3.  **Create E2E Test Suite:**
-    *   Add a new test file (`test/suite/e2e/index.ts`) using Mocha.
-4.  **Implement LSP Interaction Tests (Primary Goal):**
-    *   Write tests within `test/suite/e2e/index.ts` that:
-        *   Open Java files from the test workspace (`vscode.workspace.openTextDocument`, `vscode.window.showTextDocument`).
-        *   **Wait for LSP Initialization:** Implement a reliable mechanism (e.g., checking LSP status, or using a sufficient delay initially).
-        *   Execute Java LSP commands (`vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider`, etc.).
-        *   Log LSP results for observation (`console.log`).
-        *   (Future) Add assertions to verify LSP responses against expected outcomes.
-
-## Goal: Set Up Unit Testing Infrastructure
-
-*   **Goal:** Establish a unit testing framework (e.g., Mocha) and create initial test fixtures, including a simple Java Spring Boot project, to enable testing of features like endpoint discovery.
-
-**Next Steps:**
-
-1.  **Test Endpoint Discovery (`src/endpoint-discovery.ts`)**
-    *   **Goal:** Write comprehensive unit tests for the `discoverEndpoints` function. These tests will drive the implementation and ensure it correctly identifies Spring Boot REST endpoints under various conditions using a range of common annotations.
-    *   **Annotations to Support & Test:**
-        *   `@RestController`, `@Controller` (with `@ResponseBody`)
-        *   `@RequestMapping` (Class/Method, various attributes: `path`, `value`, `method`, `params`, `headers`, `consumes`, `produces`)
-        *   `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`
-        *   Parameter Annotations (verify they don't break discovery): `@PathVariable`, `@RequestParam`, `@RequestBody`
-        *   Return Type: `ResponseEntity` (verify it doesn't break discovery)
-        *   (Future/Optional) Consider `@ExceptionHandler`, `@ControllerAdvice` if relevant to endpoint context later.
-    *   **Strategy:** Use the Java fixture project (`test/fixtures/java-spring-test-project`). Tests will need to mock the underlying mechanism used for finding annotations. **We will prioritize using the Java Language Server Protocol (LSP) via `vscode.commands.executeCommand` calls (e.g., `vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider`, potentially others specific to the Java extension) to find symbols and their annotations.** Mocks will simulate the responses from these commands.
-    *   **Test Categories & Cases (Ensure Fixtures Exist):**
-        *   **Basic Discovery & HTTP Methods:**
-            *   Find `@GetMapping` combined with class-level `@RequestMapping`.
-            *   Find `@PostMapping` on a method in a `@RestController`.
-            *   Find `@PutMapping` (Requires adding fixture).
-            *   Find `@DeleteMapping` (Requires adding fixture).
-            *   Find `@PatchMapping` (Requires adding fixture).
-            *   Find `@RequestMapping` with `method = RequestMethod.XXX`.
-            *   Handle `@RequestMapping` without specific method (TBD: 'ANY' or all methods).
-        *   **Path Variations:**
-            *   Combine class and method level paths (`@RequestMapping("/class")` + `@GetMapping("/method")` -> `/class/method`).
-            *   Handle path variables correctly (`/users/{userId}`).
-            *   Handle multiple paths in one annotation (`@GetMapping({"/a", "/b"})`). (Requires adding fixture).
-            *   Handle root paths (`/`) and empty paths (`""`). (Requires adding fixture).
-            *   Handle paths with/without leading/trailing slashes.
-        *   **Annotation Placement & Combinations:**
-            *   Find endpoints in `@RestController` without class-level `@RequestMapping`. (Requires adding fixture).
-            *   Find endpoints in `@Controller` using method-level `@ResponseBody`. (Requires adding fixture).
-            *   Verify methods *without* mapping annotations are ignored.
-            *   Verify parameter annotations (`@PathVariable`, `@RequestParam`, `@RequestBody`) don't prevent discovery. (Requires adding fixture variations).
-            *   Verify `ResponseEntity` return type doesn't prevent discovery. (Requires adding fixture variations).
-        *   **Multiple Files/Controllers:**
-            *   Discover endpoints spread across multiple `@RestController` classes/files. (Requires adding fixture).
-        *   **Edge Cases:**
-            *   Handle no relevant annotations found (empty list).
-            *   (Optional) Handle unparseable Java files.
-    *   **Iteration:** Acknowledge that more test cases or fixture modifications might be needed as implementation progresses.
-
-## Goal: Add Specific E2E LSP Queries
-
-*   **Goal:** Enhance `src/test/suite/e2e.test.ts` with tests that specifically query the Java LSP for Spring Boot REST annotations (`@GetMapping`, `@PostMapping`, etc.), controller classes (`@RestController`), and related objects (`ResponseEntity`) within the test workspace project.
-
-**Next Steps:**
-
-1.  **Create and Add Specific E2E LSP Queries:** Create `test/suite/e2e/index.ts` and implement tests that query the Java LSP for Spring Boot annotations/symbols. Log results to inform `discoverEndpoints` implementation.
 
 ---
 

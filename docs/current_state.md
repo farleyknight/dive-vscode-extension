@@ -46,7 +46,7 @@
 ## Command Structure
 
 - Key commands: `/simpleUML`, `/relationUML`, `/sequence`.
-- New command: `/restEndpoint <query>` (stub handler implemented in `src/simple.ts`, command registered in `package.json`).
+- New command: `/restEndpoint <query>` (Command registered, handler exists in `src/simple.ts`, underlying discovery logic in `src/endpoint-discovery.ts` is partially implemented but requires E2E investigation results).
 - Removed `/randomTeach` and `/play` endpoints.
 - Updated default help message in `src/simple.ts` to reflect current commands.
 - `/simpleUML` and `/relationUML` include prompts for the LLM to automatically detect appropriate diagram types based on code analysis.
@@ -72,12 +72,10 @@
     - `package.json` includes a `test` script (`npm test`) that compiles the code and invokes the test runner (`node ./out/test/runTest.js`).
     - Helper scripts `test/runTest.ts` (main runner) and `test/suite/index.ts` (Mocha entry point) manage the test execution process.
 - **Fixtures:**
-    - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and `TestController.java` with various REST endpoint annotations, intended for testing endpoint discovery.
-    - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and several controller files (`TestController.java`, `UserController.java`, etc.) with a wider range of REST endpoint annotations (`@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, `@RequestMapping`, path variables, etc.), intended for testing endpoint discovery.
     - A Java Spring Boot project exists in `test/fixtures/java-spring-test-project` containing `pom.xml` and several controller files (`TestController.java`, `UserController.java`, etc.) with a range of REST endpoint annotations.
-    - The next step is to perform a detailed inventory of these fixtures against the specific test cases outlined in `docs/next_steps.md` to identify coverage gaps before further expansion.
-- **Current Status:** Basic test infrastructure is set up. Fixtures exist but require systematic review (inventory step added to `next_steps.md`). Specific feature tests (E2E LSP investigation, endpoint discovery unit tests) are pending this inventory and subsequent fixture updates.
-- **Debugging LSP Interactions:** The E2E tests (`src/test/suite/e2e.test.ts`) are useful for debugging interactions with the Java Language Server. By running the tests (`npm test`), you can observe the console output, which logs the requests made to the LSP (e.g., `vscode.executeWorkspaceSymbolProvider`) and the responses received. This helps verify if the LSP is running correctly and providing the expected symbols. For example, successful symbol discovery looks like this:
+    - An inventory of these fixtures against the specific test cases outlined in `docs/next_steps.md` has been completed, identifying good coverage but requiring one additional test case for "no relevant annotations found".
+- **Current Status:** Basic test infrastructure is set up. Fixture inventory is complete (pending one addition). The E2E test file (`test/suite/e2e/e2e.test.ts`) exists, but the specific tests needed to investigate LSP behavior for endpoint discovery are pending implementation.
+- **Debugging LSP Interactions:** The E2E tests (`test/suite/e2e/e2e.test.ts`) are intended for debugging interactions with the Java Language Server. By running the tests (`npm test`), you can observe the console output, which logs the requests made to the LSP (e.g., `vscode.executeWorkspaceSymbolProvider`) and the responses received. This helps verify if the LSP is running correctly and providing the expected symbols. For example, successful symbol discovery looks like this:
 
   ```
   Executing vscode.executeWorkspaceSymbolProvider for "TestController"...
@@ -163,7 +161,7 @@
     *   (Implicitly) Can analyze selected code via context variables.
 *   **Direct Diagram Generation:**
     *   `/sequence`: Generate a sequence diagram from the current file's code analysis.
-    *   `/restEndpoint`: Generate a sequence diagram for a specified Java Spring Boot REST endpoint (currently a stub).
+    *   `/restEndpoint`: Generate a sequence diagram for a specified Java Spring Boot REST endpoint (implementation in progress, not yet functional).
 *   **Webview Interaction:**
     *   Theme selection dropdown in the webview panel.
     *   "Export SVG" and "Export PNG" buttons in the webview panel trigger direct browser downloads.
@@ -189,9 +187,10 @@
 
 *   `/simpleUML`, `/relationUML`, `/sequence` **do not** use the `renderDiagram` tool for rendering; they handle it directly via `createAndShowDiagramWebview`.
 *   Error handling is implemented, including specific catches for LLM errors, stream errors, validation errors, and export errors.
-*   Key commands: `/simpleUML`, `/relationUML`, `/sequence`, `/restEndpoint` (stub).
+*   Key commands: `/simpleUML`, `/relationUML`, `/sequence`, `/restEndpoint` (partially implemented).
 *   The `lm` and `codeContext` are now fetched in the main handler and passed down via `CommandHandlerParams`.
 *   `/simpleUML` and `/relationUML` include prompts for the LLM to automatically detect appropriate diagram types based on code analysis.
 *   JSDOM/DOMPurify are used server-side for syntax validation (`validateMermaidSyntax`). This adds dependencies.
 *   Webview communication (`postMessage`, `onDidReceiveMessage`) handles theme changes. Export is now handled fully client-side.
-*   The "Save As..." button (`vscode.Command`) is added to chat responses for `/simpleUML`, `/relationUML`, and `/sequence`, triggering the `diagram.saveAs` command (for `.mmd`
+*   The "Save As..." button (`vscode.Command`) is added to chat responses for `/simpleUML`, `/relationUML`, and `/sequence`, triggering the `diagram.saveAs` command (for `.mmd` or `.md`).
+*   `/restEndpoint`: Generate a sequence diagram for a specified Java Spring Boot REST endpoint (implementation in progress, not yet functional).

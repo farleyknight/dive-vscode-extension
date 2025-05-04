@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { discoverEndpoints, EndpointInfo } from '../../src/endpoint-discovery'; // Adjust path if needed
+import { discoverEndpoints, EndpointInfo, parseMappingAnnotations } from '../../src/endpoint-discovery'; // Adjust path if needed
 import * as sinon from 'sinon'; // Using sinon for mocking
 
 // // Check the environment variable value - REMOVED
@@ -138,6 +138,20 @@ public class TestController {
 		// Act
 		const actualEndpoints = await discoverEndpoints(mockToken); // Pass mock token
 
+		// Log the actual endpoints found for better visibility
+		console.log("\n--- Discovered Endpoints (Test Output) ---");
+		console.log(JSON.stringify(actualEndpoints, (key, value) => {
+			// Custom replacer to handle vscode.Uri and vscode.Position for cleaner logging
+			if (value instanceof vscode.Uri) {
+				return value.toString(); // Convert Uri to string
+			}
+			if (key === 'position' && value && typeof value === 'object' && 'line' in value && 'character' in value) {
+				return `(L${value.line + 1}, C${value.character + 1})`; // Format Position
+			}
+			return value;
+		}, 2));
+		console.log("-----------------------------------------");
+
 		// Assert
 		// NOTE: This assertion will likely FAIL until discoverEndpoints is implemented
 		//       to use the LSP symbols and parse document content for annotations.
@@ -170,5 +184,141 @@ public class TestController {
 	});
 
 	// TODO: Add more tests based on docs/next_steps.md
+	// New suite specifically for testing the annotation parser
+	suite('parseMappingAnnotations Suite', () => {
+
+		test('Should parse basic @GetMapping', () => {
+			const text = '@GetMapping("/users")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/users'] });
+		});
+
+		test('Should parse @PostMapping with value attribute', () => {
+			const text = '@PostMapping(value = "/posts")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/posts'] });
+		});
+
+		test('Should parse @PutMapping with path attribute', () => {
+			const text = '@PutMapping(path = "/items/{id}")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'PUT', paths: ['/items/{id}'] });
+		});
+
+		test('Should parse @DeleteMapping with trailing slash in path', () => {
+			const text = '@DeleteMapping("/tasks/")';
+			const result = parseMappingAnnotations(text);
+			// Path normalization happens later, parser returns raw path
+			assert.deepStrictEqual(result, { httpMethod: 'DELETE', paths: ['/tasks/'] });
+		});
+
+		test('Should parse @PatchMapping with empty path', () => {
+			const text = '@PatchMapping("")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'PATCH', paths: [''] });
+		});
+
+		test('Should parse @RequestMapping with method and path', () => {
+			const text = '@RequestMapping(value = "/orders", method = RequestMethod.POST)';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/orders'] });
+		});
+
+		test('Should parse @RequestMapping with only path (default to GET)', () => {
+			const text = '@RequestMapping("/products")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/products'] });
+		});
+
+		test('Should parse @RequestMapping with only method (default path /)', () => {
+			const text = '@RequestMapping(method = RequestMethod.PUT)';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'PUT', paths: ['/'] }); // Default path
+		});
+
+		test('Should parse @RequestMapping without attributes (default GET, path /)', () => {
+			const text = '@RequestMapping';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/'] });
+		});
+
+		test('Should parse @GetMapping with multiple paths in value', () => {
+			const text = '@GetMapping(value = {"/api/v1", "/api/latest"})';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/api/v1', '/api/latest'] });
+		});
+
+		test('Should parse @PostMapping with multiple paths in path', () => {
+			const text = '@PostMapping(path = {"/create", "/new"})';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/create', '/new'] });
+		});
+
+		test('Should parse @RequestMapping with multiple paths and method', () => {
+			const text = '@RequestMapping(path = {"/admin", "/config"}, method = RequestMethod.DELETE)';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'DELETE', paths: ['/admin', '/config'] });
+		});
+
+		test('Should parse @GetMapping with simple multiple paths', () => {
+			const text = '@GetMapping({"/a", "/b"})';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/a', '/b'] });
+		});
+
+		test('Should handle whitespace variations', () => {
+			const text = ' @PutMapping ( path = { " / p1 " , "/p2" } ) ';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'PUT', paths: [' / p1 ', '/p2'] }); // Whitespace inside quotes is preserved
+		});
+
+		test('Should prioritize specific mapping over @RequestMapping', () => {
+			const text = '@RequestMapping("/ignored")\n@GetMapping("/specific")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/specific'] });
+		});
+
+		test('Should handle multiple lines (basic)', () => {
+			const text = `@PostMapping(
+				value = "/multiline",
+				// Some comment
+				consumes = "application/json"
+			)`;
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/multiline'] }); // Ignores consumes for now
+		});
+
+		test('Should ignore non-mapping annotations', () => {
+			const text = '@Deprecated\n@Autowired\n@GetMapping("/real")';
+			const result = parseMappingAnnotations(text);
+			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/real'] });
+		});
+
+		test('Should return null for no mapping annotations', () => {
+			const text = '@Deprecated\npublic void someMethod() {}';
+			const result = parseMappingAnnotations(text);
+			assert.strictEqual(result, null);
+		});
+
+		test('Should return null for empty string', () => {
+			const text = '';
+			const result = parseMappingAnnotations(text);
+			assert.strictEqual(result, null);
+		});
+
+        test('Should handle @RequestMapping with path array only', () => {
+            const text = '@RequestMapping({"/c", "/d"})';
+            const result = parseMappingAnnotations(text);
+            assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/c', '/d'] });
+        });
+
+        test('Should handle @GetMapping() with no path (defaults to /)', () => {
+            const text = '@GetMapping()';
+            const result = parseMappingAnnotations(text);
+            assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/'] });
+        });
+
+	});
+
 	// ... other test cases
 });

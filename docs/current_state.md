@@ -182,6 +182,7 @@
 *   **Mermaid CLI Integration:** Removed. SVG/PNG export is client-side.
 *   **Syntax Validation:** Uses `validateMermaidSyntax` helper in `src/simple.ts` which leverages JSDOM and the Mermaid library itself in a Node.js context.
 *   **Tool Implementation:** Handlers are in `src/tool-handlers.ts`, registration in `src/diagram-tools.ts`.
+*   **Endpoint Discovery (`src/endpoint-discovery.ts`):** `discoverEndpoints` function implemented using hybrid LSP+text parsing approach. `parseMappingAnnotations` helper is implemented and unit tested. Initial integration unit test for `discoverEndpoints` is passing. Needs further unit test expansion.
 
 ## Notable Points & Potential Issues
 

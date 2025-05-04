@@ -35,96 +35,112 @@ suite('Endpoint Discovery Suite', () => { // Standard suite definition
 		// Arrange
 		const mockUri = vscode.Uri.file('/path/to/mock/TestController.java');
 
-		// 1. Mock vscode.executeWorkspaceSymbolProvider
-		//    This needs to return symbols that *suggest* the relevant annotations.
-		//    The actual discoverEndpoints function will need further logic
-		//    (e.g., reading text around symbols, additional LSP calls) to confirm annotations and details.
-		const mockWorkspaceSymbols: vscode.SymbolInformation[] = [
-			// Symbol for the class - needed to find class-level @RequestMapping
-			new vscode.SymbolInformation(
-				'TestController',
-				vscode.SymbolKind.Class,
-				'com.example.test',
-				new vscode.Location(mockUri, new vscode.Range(new vscode.Position(7, 0), new vscode.Position(19, 1))) // Adjusted range
-			),
-			// Symbol for the GET method
-			new vscode.SymbolInformation(
-				'getMethod',
-				vscode.SymbolKind.Method,
-				'TestController',
-				new vscode.Location(mockUri, new vscode.Position(10, 4)) // Adjusted position
-			),
-			// Symbol for the POST method (needed if testing multiple methods)
-			new vscode.SymbolInformation(
-				'postMethod',
-				vscode.SymbolKind.Method,
-				'TestController',
-				new vscode.Location(mockUri, new vscode.Position(15, 4)) // Adjusted position
-			),
-		];
-		executeCommandStub.withArgs('vscode.executeWorkspaceSymbolProvider', '').resolves(mockWorkspaceSymbols);
+		// 1. Mock `vscode.workspace.findFiles` to return our mock URI
+		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
 
-		// 2. Mock reading file content (still needed by hypothetical implementation)
-		//    A more advanced LSP implementation might use other calls (hovers, document symbols)
-		//    but basic parsing around the symbol location is likely.
+		// 2. Mock `vscode.workspace.openTextDocument`
+		//    Make sure the `getText` method is implemented correctly for ranges.
 		const mockDocumentContent = `
 package com.example.test;
 
 import org.springframework.web.bind.annotation.*;
 
+// Line 4
 @RestController // discoverEndpoints needs to find this
 @RequestMapping("/api/class") // discoverEndpoints needs to find this
-public class TestController {
+public class TestController { // Line 7 Definition starts
 
-    @GetMapping("/method") // discoverEndpoints needs to find this
-    public String getMethod() {
+		// Line 9
+    @GetMapping("/method") // discoverEndpoints needs to find this - Line 10
+    public String getMethod() { // Line 11 Definition starts
         return "Hello GET";
     }
 
-		@PostMapping("/otherMethod") // discoverEndpoints needs to find this
-		public String postMethod() {
+		// Line 15
+		@PostMapping("/otherMethod") // discoverEndpoints needs to find this - Line 16
+		public String postMethod() { // Line 17 Definition starts
 				return "Hello POST";
 		}
 }
 `;
-		const mockTextDocument: Partial<vscode.TextDocument> = {
+		// Use a more robust getText mock that handles ranges correctly
+		const mockTextDocument = {
 			uri: mockUri,
-			getText: (range?: vscode.Range) => {
-				// Simple mock: return whole content. Real impl might request specific ranges.
-				if (!range) return mockDocumentContent;
-				// Basic range handling if needed
+			lineCount: mockDocumentContent.split('\n').length,
+			getText: sinon.stub().callsFake((range?: vscode.Range) => {
+				if (!range) {
+					return mockDocumentContent;
+				}
+				// Simulate vscode's range behavior (exclusive end line)
 				const lines = mockDocumentContent.split('\n');
 				let text = '';
 				for (let i = range.start.line; i <= range.end.line; i++) {
 					if (i >= lines.length) break;
 					const line = lines[i];
 					const startChar = (i === range.start.line) ? range.start.character : 0;
+					// End character is exclusive for substring, but inclusive for the loop
 					const endChar = (i === range.end.line) ? range.end.character : line.length;
 					text += line.substring(startChar, endChar) + (i < range.end.line ? '\n' : '');
 				}
+				// console.log(`[Mock getText] Range: L${range.start.line+1}C${range.start.character+1}-L${range.end.line+1}C${range.end.character+1} => "${text}"`);
 				return text;
-			},
-			lineCount: mockDocumentContent.split('\n').length,
-		};
-		// sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(mockUri).resolves(mockTextDocument as vscode.TextDocument);
-    // Simpler stubbing: Assume any call to openTextDocument in this test context should resolve with mockTextDocument
-    sandbox.stub(vscode.workspace, 'openTextDocument').resolves(mockTextDocument as vscode.TextDocument);
+			}),
+		} as unknown as vscode.TextDocument; // Cast to unknown first
+		// Use a matcher for the URI in withArgs if direct comparison fails
+		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
+
+
+		// 3. Mock `vscode.commands.executeCommand` for `vscode.executeDocumentSymbolProvider`
+		const classSymbolRange = new vscode.Range(7, 0, 19, 1);
+		const getMethodSymbolRange = new vscode.Range(11, 4, 13, 5); // Adjusted start/end to cover definition
+		const postMethodSymbolRange = new vscode.Range(17, 4, 19, 5); // Adjusted start/end to cover definition
+
+		const classDocSymbol = new vscode.DocumentSymbol(
+			'TestController',
+			'com.example.test', // Detail
+			vscode.SymbolKind.Class,
+			classSymbolRange, // Full range of the class
+			classSymbolRange // Selection range same as full range for class
+			// No children array in constructor
+		);
+		// Assign children after construction
+		classDocSymbol.children = [
+				new vscode.DocumentSymbol(
+					'getMethod',
+					'() -> String', // Detail example
+					vscode.SymbolKind.Method,
+					getMethodSymbolRange,
+					getMethodSymbolRange // Selection range
+				),
+				new vscode.DocumentSymbol(
+					'postMethod',
+					'() -> String', // Detail example
+					vscode.SymbolKind.Method,
+					postMethodSymbolRange,
+					postMethodSymbolRange // Selection range
+				)
+			];
+
+		const mockDocumentSymbols: vscode.DocumentSymbol[] = [classDocSymbol];
+
+		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockDocumentSymbols);
+		// Ensure other command calls don't interfere (or mock them specifically if needed)
+		executeCommandStub.callThrough(); // Allow non-stubbed calls
+
 
 		const expectedEndpoints: EndpointInfo[] = [
 			{
 				method: 'GET',
 				path: '/api/class/method', // Combined path
 				uri: mockUri,
-				position: new vscode.Position(10, 4), // Position of getMethod start
+				position: getMethodSymbolRange.start, // Position should be the *start* of the method symbol range
 				handlerMethodName: 'getMethod'
 			},
-			// TODO: Update test if discoverEndpoints should find multiple methods per file in one pass
-			// Example for POST method:
 			{
 			  method: 'POST',
 			  path: '/api/class/otherMethod',
 			  uri: mockUri,
-			  position: new vscode.Position(15, 4), // Position of postMethod start
+			  position: postMethodSymbolRange.start, // Position should be the *start* of the method symbol range
 			  handlerMethodName: 'postMethod'
 			},
 		];

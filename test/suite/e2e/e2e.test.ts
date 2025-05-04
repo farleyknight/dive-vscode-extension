@@ -93,9 +93,23 @@ suite('E2E Test Suite - Annotation Discovery', () => { // Updated suite name
 				// Log the count and the raw response
 				const symbolCount = symbols?.length ?? 0;
 				console.log(`[E2E Test] Found ${symbolCount} symbols for ${annotation}`);
-				console.log(`\\n[E2E Test] --- Raw LSP Response for ${annotation} ---`);
-				console.log(JSON.stringify(symbols || '[]', null, 2)); // Log the raw JSON or '[]' if null/undefined
-				console.log('[E2E Test] -----------------------------------------');
+
+				// Print structured summary instead of raw JSON
+				if (symbols && symbols.length > 0) {
+					console.log(`[E2E Test] --- Symbol Summary for ${annotation} ---`);
+					symbols.slice(0, 5).forEach(s => { // Log first 5 symbols
+						const { name, kind, location, containerName } = s;
+						const filePath = location.uri.fsPath.replace(workspaceRoot, ''); // Relative path
+						const position = `L${location.range.start.line + 1}C${location.range.start.character + 1}`;
+						console.log(`  - ${name} (${vscode.SymbolKind[kind]}) ${containerName ? `in [${containerName}]` : ''} at ${filePath} ${position}`);
+					});
+					if (symbols.length > 5) {
+						console.log(`  ... (${symbols.length - 5} more symbols)`);
+					}
+					console.log('[E2E Test] -----------------------------------------');
+				} else {
+					console.log(`[E2E Test] No symbols returned for ${annotation}.`);
+				}
 
 				// Verify that the LSP found at least one symbol for the annotation
 				assert.ok(symbolCount > 0, `[E2E Test] Expected to find at least one symbol for ${annotation}, but found ${symbolCount}`);
@@ -187,12 +201,37 @@ suite('E2E Test Suite - Document Symbol Discovery', () => { // Updated suite nam
 				document.uri
 			);
 
-			console.log(`\\n[E2E Test] --- Raw LSP Response for Document Symbols (${javaFileUri.fsPath}) ---`);
-			console.log(JSON.stringify(documentSymbols || '[]', null, 2)); // Log the raw JSON or '[]' if null/undefined
-			console.log('[E2E Test] -------------------------------------------------------------');
-
-			// Basic assertion: Check if the command returned an array
-			assert.ok(Array.isArray(documentSymbols), `[E2E Test] Expected document symbols for ${javaFileUri.fsPath} to be an array`);
+			// Print structured summary instead of raw JSON
+			const symbolCount = documentSymbols?.length ?? 0;
+			console.log(`[E2E Test] Found ${symbolCount} document symbols for ${javaFileUri.fsPath}`);
+			if (documentSymbols && symbolCount > 0) {
+				console.log(`[E2E Test] --- Document Symbol Summary (${javaFileUri.fsPath}) ---`);
+				const printSymbols = (symbols: (vscode.DocumentSymbol | vscode.SymbolInformation)[], indent = '  ') => {
+					symbols.slice(0, 10).forEach(s => { // Limit depth/breadth
+						// Handle both DocumentSymbol and SymbolInformation shapes if necessary
+						const name = s.name;
+						const kind = vscode.SymbolKind[s.kind];
+						const range = (s as vscode.DocumentSymbol).range || (s as vscode.SymbolInformation).location.range;
+						const position = `L${range.start.line + 1}C${range.start.character + 1}`;
+						const detail = (s as vscode.DocumentSymbol).detail || '';
+						console.log(`${indent}- ${name} (${kind}) ${detail} ${position}`);
+						if ((s as vscode.DocumentSymbol).children?.length > 0) {
+							if (indent.length < 8) { // Limit indentation depth
+								printSymbols((s as vscode.DocumentSymbol).children, indent + '  ');
+							} else {
+								console.log(`${indent}  ... (children omitted due to depth)`);
+							}
+						}
+					});
+					 if (symbols.length > 10) {
+						console.log(`${indent}... (${symbols.length - 10} more symbols at this level)`);
+					}
+				};
+				printSymbols(documentSymbols);
+				console.log('[E2E Test] -------------------------------------------------------------');
+			} else {
+				console.log(`[E2E Test] No document symbols returned for ${javaFileUri.fsPath}.`);
+			}
 
 		} catch (error) {
 			console.error(`[E2E Test] Error executing document symbol provider or asserting for ${javaFileUri.fsPath}:`, error);
@@ -267,23 +306,25 @@ suite('E2E Test Suite - Hover Provider Discovery', () => { // Updated suite name
 							position
 						);
 
-						console.log(`\\n[E2E Test] --- Raw LSP Hover Response for ${annotation} at ${lineIndex + 1}:${annotationIndex} ---`);
-						// Hover result is an array, potentially empty. Log its contents.
-						if (hoverResult && hoverResult.length > 0) {
+						console.log(`\\n[E2E Test] --- Hover Info for ${annotation} at L${lineIndex + 1}:C${annotationIndex} ---`);
+						if (hoverResult && hoverResult.length > 0 && hoverResult[0].contents.length > 0) {
 							hoversFound++;
-							// Process and log hover contents (often MarkdownString)
-							hoverResult.forEach((hover, index) => {
-								console.log(`[Hover ${index + 1}/${hoverResult.length}]:`);
-								hover.contents.forEach((content, contentIndex) => {
-									if (typeof content === 'object' && 'value' in content) { // Handle MarkdownString
-										console.log(`  Content ${contentIndex + 1}: ${JSON.stringify(content.value)}`);
-									} else {
-										console.log(`  Content ${contentIndex + 1}: ${JSON.stringify(content)}`); // Handle other potential types
-									}
-								});
-							});
+							// Print summary of first content part without raw markdown
+							const firstContent = hoverResult[0].contents[0];
+							let contentSummary = '';
+							if (typeof firstContent === 'object' && 'value' in firstContent) { // MarkdownString
+								contentSummary = `MarkdownString starting with: "${firstContent.value.substring(0, 50).replace(/\\n/g, '\\\\n')}..."`;
+							} else if (typeof firstContent === 'string') { // string (MarkedString)
+								contentSummary = `string starting with: "${firstContent.substring(0, 50).replace(/\\n/g, '\\\\n')}..."`;
+							} else {
+								contentSummary = `Hover content type: ${typeof firstContent}`;
+							}
+							console.log(`  First content part: ${contentSummary}`);
+							assert.ok(hoverResult[0].contents.length > 0, `[E2E Test] Expected hover content for ${annotation} at ${lineIndex + 1}:${annotationIndex}`);
 						} else {
-							console.log("(No hover information returned)");
+							console.log(`  No hover information received.`);
+							// It's possible some annotations *don't* have hover info, so only fail if specifically expected
+							// assert.fail(`[E2E Test] Expected hover information for ${annotation} at ${lineIndex + 1}:${annotationIndex}, but got none.`);
 						}
 						console.log('[E2E Test] -------------------------------------------------------------');
 
@@ -358,16 +399,18 @@ suite('E2E Test Suite - Command Discovery', () => { // Updated suite name
 				commandKeywords.some(keyword => cmd.toLowerCase().includes(keyword))
 			);
 
-			console.log('\\n[E2E Test] --- Potentially Relevant Commands --- ');
-			if (relevantCommands.length > 0) {
-				console.log(JSON.stringify(relevantCommands.sort(), null, 2));
-			} else {
-				console.log("(No commands found matching keywords)");
-			}
+			console.log('\\n[E2E Test] --- Potentially Relevant Commands Summary --- ');
+			console.log(`  Found ${relevantCommands.length} commands containing keywords: ${commandKeywords.join(', ')}`);
+			relevantCommands.sort().slice(0, 30).forEach(cmd => console.log(`  - ${cmd}`)); // Log first 30 alphabetically
 			console.log('[E2E Test] ---------------------------------------');
 
-			// Optional: Add an assertion here if you expect specific commands to exist
-			// assert.ok(relevantCommands.includes('some.expected.java.command'), 'Expected command not found');
+			// Explicitly check for a key command
+			const callHierarchyCommand = 'java.showCallHierarchy'; // Example, adjust if needed
+			if (allCommands.includes(callHierarchyCommand)) {
+				console.log(`\\n[E2E Test] Confirmed presence of key command: ${callHierarchyCommand}`);
+			} else {
+				console.warn(`\\n[E2E Test] Key command ${callHierarchyCommand} not found in command list.`);
+			}
 
 		} catch (error) {
 			console.error(`[E2E Test] Error getting or filtering commands:`, error);

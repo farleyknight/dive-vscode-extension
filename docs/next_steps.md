@@ -11,9 +11,20 @@ This document tracks the ongoing development goals, completed tasks, and immedia
     2.  After the call returns the `EndpointInfo[]` list, check if any endpoints were found.
     3.  If endpoints exist, format a message indicating the number found (e.g., "I found X REST endpoints:").
     4.  Iterate through the `EndpointInfo` array.
-    5.  For each endpoint, format a string containing its `method` and `path` (e.g., `GET /api/users`).
+    5.  For each endpoint, format a string containing its `method` and `path` (e.g., \`- \`${endpoint.method} ${endpoint.path}\` in \`${path.basename(endpoint.uri.fsPath)}\`).
     6.  Use `stream.markdown()` to send these formatted messages to the chat interface.
-    7.  Ensure this reporting happens *before* the call to `disambiguateEndpoint`.
+    7.  Ensure this reporting happens *before* the call to `disambiguateEndpoint` and before the existing "no endpoints found" check.
+    8.  Keep the original "no endpoints found" message for cases where discovery is successful but yields no results.
+*   **Implementation Plan:**
+    1.  **Navigate** to `handleRestEndpoint` in `src/diagramParticipant.ts`.
+    2.  **Locate** the line: `const allEndpoints = await discoverEndpoints(token);`.
+    3.  **Insert** the reporting logic immediately after this line and before the subsequent cancellation check or `if (!allEndpoints || allEndpoints.length === 0)` block.
+    4.  **Add** an `if (allEndpoints && allEndpoints.length > 0)` check.
+    5.  **Inside the `if`:**
+        *   Report count: `stream.markdown(\`I found ${allEndpoints.length} REST endpoints:\`);`
+        *   Loop: `for (const endpoint of allEndpoints)`
+        *   Inside loop: `stream.markdown(\`- \`${endpoint.method} ${endpoint.path}\` in \`${path.basename(endpoint.uri.fsPath)}\`);` (Ensure `path` is imported/available).
+    6.  **Verify** the original "no endpoints found" message remains correctly placed within the `if (!allEndpoints || allEndpoints.length === 0)` block.
 *   **Status:** *(Not Started)*
 
 ---

@@ -98,7 +98,7 @@
 			}
 		]
 	},
-	"main": "./out/extension.js",
+	"main": "./out/src/extension.js",
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
 		"clean": "rm -rf ./out",

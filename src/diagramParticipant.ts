@@ -357,6 +357,17 @@ async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQ
         stream.progress("Discovering REST endpoints...");
         const allEndpoints = await discoverEndpoints(token); // Call discovery function
 
+        // Report discovered endpoints immediately
+        if (allEndpoints && allEndpoints.length > 0) {
+            stream.markdown(`I found ${allEndpoints.length} REST endpoints:`);
+            for (const endpoint of allEndpoints) {
+                // Use path.basename to get just the filename
+                const filename = path.basename(endpoint.uri.fsPath);
+                stream.markdown(`- \`${endpoint.method} ${endpoint.path}\` in \`${filename}\``);
+            }
+        }
+        // Keep the original "no endpoints" check later for cases where discovery succeeds but finds nothing
+
         if (token.isCancellationRequested) {
             logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
             return { metadata: { command: 'restEndpoint' } };

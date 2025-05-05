@@ -2,7 +2,23 @@
 
 This document tracks the ongoing development goals, completed tasks, and immediate next steps for the VS Code extension.
 
-## Immediate Next Task: ~~Create E2E Test for LSP Annotation Discovery~~ *(Completed)*
+**Immediate Next Task: Report Discovered Endpoints in Chat**
+
+*   **Goal:** Modify the `@diagram /restEndpoint` command handler (`handleRestEndpoint` in `src/simple.ts`) to report the discovered endpoints (method and path) back to the user via the chat stream (`stream.markdown`) immediately after the `discoverEndpoints` function completes.
+*   **Why:** This provides immediate visibility into the results of the discovery phase before proceeding to disambiguation or call hierarchy, matching the desired user experience.
+*   **Steps:**
+    1.  Locate the call to `discoverEndpoints` within `handleRestEndpoint`.
+    2.  After the call returns the `EndpointInfo[]` list, check if any endpoints were found.
+    3.  If endpoints exist, format a message indicating the number found (e.g., "I found X REST endpoints:").
+    4.  Iterate through the `EndpointInfo` array.
+    5.  For each endpoint, format a string containing its `method` and `path` (e.g., `GET /api/users`).
+    6.  Use `stream.markdown()` to send these formatted messages to the chat interface.
+    7.  Ensure this reporting happens *before* the call to `disambiguateEndpoint`.
+*   **Status:** *(Not Started)*
+
+---
+
+## Previous Immediate Task: ~~Create E2E Test for LSP Annotation Discovery~~ *(Completed)*
 
 *   **Goal:** ~~Create an End-to-End (E2E) test that uses the Java Language Server Protocol (LSP) to discover all specified Spring Boot REST annotations within a test fixture file.~~ **Investigate LSP capabilities for endpoint discovery via E2E tests.**
 *   **Why:** ~~This is a **crucial first step** before refining `discoverEndpoints`. We need to execute LSP commands (e.g., `vscode.executeWorkspaceSymbolProvider`, `vscode.executeDocumentSymbolProvider`, potentially hover/definition providers) against the Java fixtures (`test/fixtures/java-spring-test-project`) and **log the raw results**. Understanding the *exact* structure and content of the LSP responses for REST annotations is essential for parsing them correctly.~~ **Completed E2E investigation revealed limitations.** Standard LSP features (`workspaceSymbol`, `documentSymbol`, `hover`) and available custom commands **do not reliably provide annotation parameters** (e.g., path, method). However, LSP *can* reliably locate class and method symbols.
@@ -35,15 +51,15 @@ This document tracks the ongoing development goals, completed tasks, and immedia
 **Immediate Next Task (Step 1): Implement Hybrid Endpoint Discovery & Unit Test Parsing**
 
 1.  **Endpoint Discovery and Disambiguation (`src/endpoint-discovery.ts`):** *(Partially Implemented - Strategy Defined)*
-    *   **Implement `discoverEndpoints` (Hybrid Approach):**
-        *   Use LSP (e.g., `documentSymbolProvider` or `workspaceSymbolProvider`) to find candidate controller classes and handler methods within the workspace.
-        *   For each identified symbol (class/method), get its accurate `vscode.Uri` and `vscode.Range`/`vscode.Position`.
-        *   Read the text content of the relevant source file lines preceding the symbol's location.
-        *   Use **text/regex parsing** (e.g., in a dedicated helper function like `parseMappingAnnotations`) on these lines to identify Spring mapping annotations (`@RequestMapping`, `@GetMapping`, etc.) and **extract their parameters** (path, value, method). *(Helper function `parseMappingAnnotations` implemented and unit tested)*.
-        *   Combine class-level and method-level paths. Determine the HTTP method.
-        *   Create the structured list: `[{ method: string, path: string, uri: vscode.Uri, position: vscode.Position, handlerMethodName: string, description?: string }, ...]`.
+    *   **Implement `discoverEndpoints` (Hybrid Approach):** *(Implementation Done)*
+        *   Use LSP (e.g., `documentSymbolProvider` or `workspaceSymbolProvider`) to find candidate controller classes and handler methods within the workspace. *(Implemented)*
+        *   For each identified symbol (class/method), get its accurate `vscode.Uri` and `vscode.Range`/`vscode.Position`. *(Implemented)*
+        *   Read the text content of the relevant source file lines preceding the symbol's location. *(Implemented)*
+        *   Use **text/regex parsing** (e.g., in a dedicated helper function like `parseMappingAnnotations`) on these lines to identify Spring mapping annotations (`@RequestMapping`, `@GetMapping`, etc.) and **extract their parameters** (path, value, method). *(Helper function `parseMappingAnnotations` implemented and unit tested)*. *(Implemented)*
+        *   Combine class-level and method-level paths. Determine the HTTP method. *(Implemented)*
+        *   Create the structured list: `[{ method: string, path: string, uri: vscode.Uri, position: vscode.Position, handlerMethodName: string, description?: string }, ...]`. *(Implemented)*
     *   **Implement `disambiguateEndpoint`:** Match the user's natural language query against the discovered endpoints. Handle ambiguity. *(Not Started - Stub Exists)*
-    *   **Unit Tests (`test/suite/endpoint-discovery.test.ts`):** *(Partially Completed - Unit tests for `parseMappingAnnotations` are implemented. Initial integration test for `discoverEndpoints` is passing. **Needs significant expansion for `discoverEndpoints` logic and edge cases.**)*
+    *   **Unit Tests (`test/suite/endpoint-discovery.test.ts`):** *(Partially Completed - Unit tests for `parseMappingAnnotations` are implemented. Initial integration test for `discoverEndpoints` is passing. **Needs significant expansion for `discoverEndpoints` logic, edge cases, and integration points.**)*
     *   **E2E Tests (`test/suite/e2e/e2e.test.ts`):** *(Completed for Investigation)* - E2E tests executed LSP commands, revealing limitations and informing the hybrid strategy. No further E2E work needed *for discovery* at this stage. E2E test logging improved for readability.
 2.  **Java LSP Call Hierarchy Integration:** *(Not Started - Depends on Step 1)*
     *   Identify Java extension call hierarchy command(s) (e.g., `vscode.prepareCallHierarchy`, `vscode.provideOutgoingCalls`).
@@ -86,20 +102,20 @@ This document tracks the ongoing development goals, completed tasks, and immedia
 **Status & Remaining Steps:**
 
 1.  **Command Setup (`/restEndpoint`):** *(Completed - See Completed Tasks)*
-2.  **Endpoint Discovery and Disambiguation (`src/endpoint-discovery.ts`):** ***(Current Focus)***
-    *   **Goal:** Implement `discoverEndpoints` using the **hybrid approach** and implement `disambiguateEndpoint`. Critically, **write comprehensive unit tests for the text/regex parsing component.**
+2.  **Endpoint Discovery and Disambiguation (`src/endpoint-discovery.ts`):** ***(Current Focus - Discovery Implemented, Disambiguation Pending)***
+    *   **Goal:** Implement `discoverEndpoints` using the **hybrid approach** and implement `disambiguateEndpoint`. Critically, **write comprehensive unit tests for the `discoverEndpoints` function and the text/regex parsing component.**
     *   **Status:**
-        *   `discoverEndpoints`: *(Implementation Done - Needs More Unit Testing)* - Implemented based on the **hybrid approach**. The core annotation parsing logic (`parseMappingAnnotations`) is implemented and tested.
+        *   `discoverEndpoints`: *(Implementation Done)* - Implemented based on the **hybrid approach**. It uses LSP symbols to find methods/classes and text parsing (`parseMappingAnnotations`) to extract annotation details.
         *   `disambiguateEndpoint`: *(Not Started - Stub Exists)*
-        *   Unit Tests (`test/suite/endpoint-discovery.test.ts`): *(Partially Completed - Unit tests for `parseMappingAnnotations` are implemented. Initial integration test for `discoverEndpoints` is passing. **Needs significant expansion for `discoverEndpoints` logic and edge cases.**)*
+        *   Unit Tests (`test/suite/endpoint-discovery.test.ts`): *(Partially Completed - Unit tests for `parseMappingAnnotations` are implemented. Initial integration test for `discoverEndpoints` is passing. **Needs significant expansion for `discoverEndpoints` logic, edge cases, and integration points.**)*
         *   E2E Tests (`test/suite/e2e/e2e.test.ts`): *(Completed for Investigation)* - E2E tests executed LSP commands, revealing limitations and informing the hybrid strategy. No further E2E work needed *for discovery* at this stage. E2E test logging improved for readability.
-    *   **Approach (Hybrid LSP + Regex):**
-        *   Use LSP (`documentSymbolProvider` or similar) to identify candidate controller classes and handler methods and get their precise locations (`Uri`, `Position`).
-        *   Read the source code lines around these locations.
-        *   Use **text/regex parsing** (in a dedicated, testable function like `parseMappingAnnotations`) to find mapping annotations on those lines and extract path/method parameters. *(Parsing function implemented and unit tested).*
-        *   Combine paths and determine HTTP methods.
-        *   Implement `disambiguateEndpoint` logic.
-        *   Expand unit tests (`endpoint-discovery.test.ts`) focusing on the `discoverEndpoints` function itself and any remaining parsing edge cases.
+    *   **Approach (Hybrid LSP + Regex):** *(Implemented for discovery)*
+        *   Use LSP (`documentSymbolProvider` or similar) to identify candidate controller classes and handler methods and get their precise locations (`Uri`, `Position`). *(Done)*
+        *   Read the source code lines around these locations. *(Done)*
+        *   Use **text/regex parsing** (in a dedicated, testable function like `parseMappingAnnotations`) to find mapping annotations on those lines and extract path/method parameters. *(Parsing function implemented and unit tested).* *(Done)*
+        *   Combine paths and determine HTTP methods. *(Done)*
+        *   Implement `disambiguateEndpoint` logic. *(Pending)*
+        *   Expand unit tests (`endpoint-discovery.test.ts`) focusing on the `discoverEndpoints` function itself and any remaining parsing edge cases and LSP/file reading integration. *(Pending)*
     *   **Test Fixtures & Coverage (`test/fixtures/java-spring-test-project`):**
         *   *(Inventory Completed)* Fixtures cover most annotation cases needed for unit testing the parser.
     *   **Annotations to Support:** `@RestController`, `@Controller` (+`@ResponseBody`), `@RequestMapping`, `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`. (Verify parameter/return type annotations don't break discovery).
@@ -124,9 +140,9 @@ This document tracks the ongoing development goals, completed tasks, and immedia
 
 1.  **Command Setup (`/restEndpoint`):** *(Completed - See Completed Tasks)*
 2.  **Endpoint Discovery and Disambiguation:** ***(Current Focus)***
-    *   Implement `discoverEndpoints` logic in `src/endpoint-discovery.ts` using the **Hybrid LSP + Regex approach**. *(Needs implementation)*
+    *   Implement `discoverEndpoints` logic in `src/endpoint-discovery.ts` using the **Hybrid LSP + Regex approach**. *(Implementation Done)*
     *   Implement `disambiguateEndpoint` logic in `src/endpoint-discovery.ts`. *(Stub exists)*
-    *   **Add comprehensive unit tests** in `test/suite/endpoint-discovery.test.ts`, focusing **primarily** on the **regex/text parameter parsing logic**. Mock simple LSP location results. *(Needs major expansion)*
+    *   **Add comprehensive unit tests** in `test/suite/endpoint-discovery.test.ts`, focusing **primarily** on the **`discoverEndpoints` integration logic** and any remaining edge cases for `parseMappingAnnotations`. Mock simple LSP location results. *(Needs major expansion)*
     *   ~~Create E2E tests in `test/suite/e2e/index.ts` to investigate LSP behavior.~~ *(E2E Investigation Completed)* Limited E2E integration tests can be added *later* if deemed necessary after unit tests are complete.
 3.  **Java LSP Call Hierarchy Integration:** *(Next - Depends on Step 2)*
     *   Identify Java extension call hierarchy command(s).
@@ -189,7 +205,7 @@ This document tracks the ongoing development goals, completed tasks, and immedia
         *   Handle annotations spanning multiple lines. *(Unit Test for parsing exists)*
         *   Handle comments within/between annotations. *(Unit Test for parsing exists)*
         *   **Testing:** ***PRIORITY:***
-            *   Write/expand **unit tests** (`test/suite/endpoint-discovery.test.ts`) focusing heavily on the **`discoverEndpoints` logic**, mocking LSP results and file content. ***(Status: Parsing logic unit tests (`parseMappingAnnotations`) largely complete. Initial integration test for `discoverEndpoints` is passing. Needs significant expansion.)***
+            *   Write/expand **unit tests** (`test/suite/endpoint-discovery.test.ts`) focusing heavily on the **`discoverEndpoints` logic**, mocking LSP results and file content, and covering integration points. ***(Status: Parsing logic unit tests (`parseMappingAnnotations`) largely complete. Initial integration test for `discoverEndpoints` is passing. Needs significant expansion.)***
             *   Unit test disambiguation logic. *(Pending)*
             *   (Later) Consider minimal E2E tests for basic integration verification if needed.
             *   Manually test.

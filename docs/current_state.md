@@ -46,7 +46,7 @@
 ## Command Structure
 
 - Key commands: `/simpleUML`, `/relationUML`, `/sequence`.
-- New command: `/restEndpoint <query>` (Command registered, handler exists in `src/simple.ts`, underlying discovery logic in `src/endpoint-discovery.ts` is partially implemented but requires E2E investigation results).
+- New command: `/restEndpoint <query>` (Command registered, handler exists in `src/simple.ts`, underlying discovery logic in `src/endpoint-discovery.ts` is **implemented using hybrid approach**; disambiguation is pending).
 - Removed `/randomTeach` and `/play` endpoints.
 - Updated default help message in `src/simple.ts` to reflect current commands.
 - `/simpleUML` and `/relationUML` include prompts for the LLM to automatically detect appropriate diagram types based on code analysis.
@@ -182,7 +182,7 @@
 *   **Mermaid CLI Integration:** Removed. SVG/PNG export is client-side.
 *   **Syntax Validation:** Uses `validateMermaidSyntax` helper in `src/simple.ts` which leverages JSDOM and the Mermaid library itself in a Node.js context.
 *   **Tool Implementation:** Handlers are in `src/tool-handlers.ts`, registration in `src/diagram-tools.ts`.
-*   **Endpoint Discovery (`src/endpoint-discovery.ts`):** `discoverEndpoints` function implemented using hybrid LSP+text parsing approach. `parseMappingAnnotations` helper is implemented and unit tested. Initial integration unit test for `discoverEndpoints` is passing. Needs further unit test expansion.
+*   **Endpoint Discovery (`src/endpoint-discovery.ts`):** `discoverEndpoints` function implemented using hybrid LSP+text parsing approach. `parseMappingAnnotations` helper is implemented and unit tested. Initial integration unit test for `discoverEndpoints` is passing. Needs further unit test expansion. `disambiguateEndpoint` function is a placeholder stub.
 
 ## Notable Points & Potential Issues
 
@@ -194,4 +194,4 @@
 *   JSDOM/DOMPurify are used server-side for syntax validation (`validateMermaidSyntax`). This adds dependencies.
 *   Webview communication (`postMessage`, `onDidReceiveMessage`) handles theme changes. Export is now handled fully client-side.
 *   The "Save As..." button (`vscode.Command`) is added to chat responses for `/simpleUML`, `/relationUML`, and `/sequence`, triggering the `diagram.saveAs` command (for `.mmd` or `.md`).
-*   `/restEndpoint`: Generate a sequence diagram for a specified Java Spring Boot REST endpoint (implementation in progress, not yet functional).
+*   `/restEndpoint`: Generate a sequence diagram for a specified Java Spring Boot REST endpoint. Discovery logic is implemented; disambiguation and sequence diagram generation are not yet functional.

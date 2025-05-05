@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { registerSimpleParticipant } from './simple';
+import { registerSimpleParticipant } from './diagramParticipant';
 import { registerDiagramTools } from './diagram-tools';
 
 export function activate(context: vscode.ExtensionContext) {

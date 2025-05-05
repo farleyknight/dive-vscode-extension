@@ -30,43 +30,41 @@ interface ParsedAnnotationInfo {
  * @returns An object containing the determined HTTP method and an array of paths, or null if no mapping annotation is found.
  */
 export function parseMappingAnnotations(text: string): ParsedAnnotationInfo | null {
-    const annotationRegex = /@([A-Za-z]+Mapping)\s*(?:\((.*?)\))?/gs; // `s` flag for dot to match newline (for potential multiline later)
-    let match;
-    let result: ParsedAnnotationInfo | null = null;
-    let primaryAnnotationName: string | null = null; // e.g., GetMapping, RequestMapping
+    const annotationRegex = /@([A-Za-z]+Mapping)\s*(?:\((.*?)\))?/gs; // `s` flag for dot to match newline
+    let lastMatch: RegExpExecArray | null = null;
+    let currentMatch;
 
-    while ((match = annotationRegex.exec(text)) !== null) {
-        const annotationName = match[1]; // e.g., "GetMapping", "RequestMapping"
-        const attributesString = match[2]?.trim() || ''; // Content inside parentheses
-
-        const httpMethod = getHttpMethodFromAnnotationName(annotationName);
-        if (!httpMethod && annotationName !== 'RequestMapping') {
-            continue; // Only process known mapping annotations
-        }
-
-        // Prioritize more specific annotations (@GetMapping over @RequestMapping)
-        if (result && annotationName === 'RequestMapping' && primaryAnnotationName !== 'RequestMapping') {
-            continue; // Already found a more specific mapping
-        }
-        if (result && annotationName !== 'RequestMapping' && primaryAnnotationName === 'RequestMapping') {
-           result = null; // Override RequestMapping with specific mapping
-        }
-
-        result = parseAttributes(attributesString, annotationName);
-        primaryAnnotationName = annotationName;
-
-        // If we found a specific mapping (GET, POST, etc.), we can stop looking unless it's RequestMapping
-        if (annotationName !== 'RequestMapping') {
-             break; // Assume only one specific mapping annotation is primary
-        }
+    // Find the *last* matching annotation in the text block
+    while ((currentMatch = annotationRegex.exec(text)) !== null) {
+        lastMatch = currentMatch;
     }
 
-    // console.log(`[parseMappingAnnotations] Text: "${text}" => Result:`, result);
-    // Apply default GET method for RequestMapping *after* processing attributes
-    if (result && primaryAnnotationName === 'RequestMapping' && !result.httpMethod) {
+    if (!lastMatch) {
+        // console.log(`[parseMappingAnnotations] No match found in text: "${text}"`);
+        return null; // No mapping annotation found
+    }
+
+    const annotationName = lastMatch[1]; // e.g., "GetMapping", "RequestMapping"
+    const attributesString = lastMatch[2]?.trim() || ''; // Content inside parentheses
+
+    // console.log(`[parseMappingAnnotations] Last match: ${annotationName}, Attrs: "${attributesString}"`);
+
+    // Parse the attributes of the last found annotation
+    let result = parseAttributes(attributesString, annotationName);
+
+    // Apply default GET method for RequestMapping *only if* no method was found in attributes
+    if (annotationName === 'RequestMapping' && !result.httpMethod) {
+        // console.log(`[parseMappingAnnotations] Applying default GET for RequestMapping`);
         result.httpMethod = 'GET';
     }
 
+    // Ensure we always have a method if an annotation was found (unless parser failed badly)
+    if (!result.httpMethod) {
+        console.warn(`[parseMappingAnnotations] Could not determine HTTP method for annotation ${annotationName} with attributes "${attributesString}". Defaulting to GET.`);
+        result.httpMethod = 'GET'; // Default safety net
+    }
+
+    // console.log(`[parseMappingAnnotations] Text: "${text.substring(0, 50)}..." => Result:`, result);
     return result;
 }
 
@@ -95,15 +93,15 @@ function parseAttributes(attributesString: string, annotationName: string): Pars
 
     // 3. Handle named attributes: @RequestMapping(value="/path", method=RequestMethod.POST)
     // Very simplified parsing - assumes key=value pairs, strings in quotes, RequestMethods
-    const attributeRegex = /(\w+)\s*=\s*(?:\{(.*?)\}|"([^"]*)"|(RequestMethod\.\w+))/g;
+    const attributeRegex = /(\w+)\s*=\s*(?:"([^"]*)"|\{(.*?)\}|(RequestMethod\.\w+))/gs; // Try simple string first, add 's' flag
     let attrMatch;
     let foundPathAttribute = false;
 
     while ((attrMatch = attributeRegex.exec(attributesString)) !== null) {
         const key = attrMatch[1];
-        const arrayContent = attrMatch[2];
-        const stringValue = attrMatch[3];
-        const enumValue = attrMatch[4];
+        const stringValue = attrMatch[2]; // Value in quotes "..."
+        const arrayContent = attrMatch[3]; // Content inside {...}
+        const enumValue = attrMatch[4]; // RequestMethod.XXX
 
         if ((key === 'value' || key === 'path')) {
              foundPathAttribute = true;
@@ -112,11 +110,23 @@ function parseAttributes(attributesString: string, annotationName: string): Pars
             } else if (stringValue !== undefined) { // path = "/p1"
                 paths = [stringValue];
             }
-        } else if (key === 'method' && enumValue) {
-            // Extract method from RequestMethod.XXX
-            const methodMatch = enumValue.match(/RequestMethod\.(\w+)/);
-            if (methodMatch) {
-                httpMethod = methodMatch[1].toUpperCase(); // POST, GET etc.
+        } else if (key === 'method') {
+            if (enumValue) {
+                 // Simple case: method = RequestMethod.XXX
+                 const methodMatch = enumValue.match(/RequestMethod\.(\w+)/);
+                 if (methodMatch) {
+                     httpMethod = methodMatch[1].toUpperCase();
+                 }
+            } else if (arrayContent) {
+                // Complex case: method = { RequestMethod.XXX, ... }
+                // Try to extract the *first* method found in the array content
+                const firstMethodMatch = arrayContent.match(/RequestMethod\.(\w+)/);
+                if (firstMethodMatch) {
+                    httpMethod = firstMethodMatch[1].toUpperCase();
+                    // console.log(`[parseAttributes] Extracted first method from array: ${httpMethod}`); // DEBUG
+                } else {
+                     console.warn(`[parseAttributes] Could not extract RequestMethod from method array: ${arrayContent}`);
+                }
             }
         }
     }
@@ -270,6 +280,12 @@ export async function discoverEndpoints(token: vscode.CancellationToken): Promis
                     const methodAnnotationText = document.getText(methodAnnotationRange);
 
                     const methodMappingInfo = parseMappingAnnotations(methodAnnotationText);
+
+                    // <<< DEBUG LOGGING START >>>
+                    // console.log(`[discoverEndpoints] Method: ${methodSymbol.name}, Range: L${methodRange.start.line + 1}, Input Text:`);
+                    // console.log(`--------------------\n${methodAnnotationText}\n--------------------`);
+                    // console.log(`[discoverEndpoints] Parsed methodMappingInfo:`, methodMappingInfo);
+                    // <<< DEBUG LOGGING END >>>
 
                     if (methodMappingInfo && methodMappingInfo.httpMethod) {
                         // If a specific method mapping (@GetMapping, etc.) is found, use it

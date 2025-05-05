@@ -249,77 +249,81 @@ export async function discoverEndpoints(token: vscode.CancellationToken): Promis
                 const classAnnotationRange = new vscode.Range(classStartLine, 0, classRange.start.line + 1, 0);
                 const classAnnotationText = document.getText(classAnnotationRange);
 
-                // Basic check for controller annotations (could be more robust)
-                const isRestController = classAnnotationText.includes('@RestController');
-                const isController = classAnnotationText.includes('@Controller');
-
-                if (!isRestController && !isController) {
-                    continue; // Skip classes not annotated as controllers
+                // Check if it's a likely controller
+                if (!classAnnotationText.includes('@RestController') && !classAnnotationText.includes('@Controller')) {
+                    continue;
                 }
-                 // TODO: Add check for @ResponseBody if only @Controller is present?
-                 // For now, assume @Controller implies potential REST endpoints for simplicity
 
-                console.log(`[discoverEndpoints] Found potential controller: ${classSymbol.name} in ${uri.fsPath}`);
-
-                // Parse class-level @RequestMapping (if any)
+                 // Try to parse class-level RequestMapping for base path
                 const classMappingInfo = parseMappingAnnotations(classAnnotationText);
-                const classBasePath = classMappingInfo?.paths[0] ?? ''; // Assuming single path for class for now
-                console.log(`[discoverEndpoints] Class base path for ${classSymbol.name}: "${classBasePath}"`);
+                const basePath = normalizePath(classMappingInfo?.paths?.[0] || ''); // Use first path if multiple
 
                 // Find methods within this class
                 const methods = classSymbol.children.filter(symbol => symbol.kind === vscode.SymbolKind.Method);
 
-                for (const methodSymbol of methods) {
+                for (let i = 0; i < methods.length; i++) {
+                    const methodSymbol = methods[i];
                     if (token.isCancellationRequested) break;
 
-                    const methodRange = methodSymbol.range;
-                    // Get text around the method definition for annotations
-                    // Look back a few lines from the method start
-                    const methodStartLine = Math.max(0, methodRange.start.line - 5); // Look back 5 lines
-                    const methodAnnotationRange = new vscode.Range(methodStartLine, 0, methodRange.start.line + 1, 0);
-                    const methodAnnotationText = document.getText(methodAnnotationRange);
+                    const methodRange = methodSymbol.selectionRange; // Use selectionRange for more accuracy
 
-                    const methodMappingInfo = parseMappingAnnotations(methodAnnotationText);
-
-                    // <<< DEBUG LOGGING START >>>
-                    // console.log(`[discoverEndpoints] Method: ${methodSymbol.name}, Range: L${methodRange.start.line + 1}, Input Text:`);
-                    // console.log(`--------------------\n${methodAnnotationText}\n--------------------`);
-                    // console.log(`[discoverEndpoints] Parsed methodMappingInfo:`, methodMappingInfo);
-                    // <<< DEBUG LOGGING END >>>
-
-                    if (methodMappingInfo && methodMappingInfo.httpMethod) {
-                        // If a specific method mapping (@GetMapping, etc.) is found, use it
-                        for (const methodPath of methodMappingInfo.paths) {
-                            const fullPath = combinePaths(classBasePath, methodPath);
-                            endpoints.push({
-                                method: methodMappingInfo.httpMethod,
-                                path: fullPath,
-                                uri: uri,
-                                // Use the range start for position - more accurate than selectionRange?
-                                position: methodRange.start, // Position of the method definition itself
-                                handlerMethodName: methodSymbol.name,
-                            });
-                            console.log(`[discoverEndpoints] --> Added endpoint: ${methodMappingInfo.httpMethod} ${fullPath} (${methodSymbol.name})`);
-                        }
-                    } else if (methodMappingInfo && !methodMappingInfo.httpMethod && classMappingInfo) {
-                        // Handle case where method has @RequestMapping without method defined,
-                        // potentially inheriting method from class (though rare/complex, focus on path)
-                        // Or if method mapping doesn't specify HTTP method, default to GET (handled in parse)
-                        // For now, just handle the path combination, assuming GET if not specified
-                         const effectiveHttpMethod = methodMappingInfo.httpMethod ?? 'GET'; // Should be handled by parse, but double check
-                         for (const methodPath of methodMappingInfo.paths) {
-                             const fullPath = combinePaths(classBasePath, methodPath);
-                             endpoints.push({
-                                 method: effectiveHttpMethod,
-                                 path: fullPath,
-                                 uri: uri,
-                                 position: methodRange.start,
-                                 handlerMethodName: methodSymbol.name,
-                             });
-                              console.log(`[discoverEndpoints] --> Added endpoint (default/class method?): ${effectiveHttpMethod} ${fullPath} (${methodSymbol.name})`);
-                         }
+                    // Refined Range Logic:
+                    // Start looking for annotations from the end of the previous symbol (or class start)
+                    // up to the start of the current method symbol.
+                    let annotationStartLine: number;
+                    if (i > 0) {
+                        // Start after the previous method symbol ends
+                        annotationStartLine = methods[i-1].range.end.line + 1;
+                    } else {
+                        // Start after the class definition line (or slightly before to catch annotations)
+                        annotationStartLine = Math.max(0, classSymbol.selectionRange.start.line - 5); // Look back from class start for the first method
                     }
-                     // Else: Method has no mapping annotation, ignore it.
+                    // Ensure start is not after the method itself
+                    annotationStartLine = Math.min(annotationStartLine, methodRange.start.line);
+
+                    // End the search range just before the method declaration line
+                    const annotationEndLine = methodRange.start.line + 1; // Include the line where the method starts
+
+                    // Ensure range is valid
+                    if (annotationStartLine >= annotationEndLine) {
+                         console.warn(`[discoverEndpoints] Invalid annotation range calculation for method ${methodSymbol.name}. Skipping annotations.`);
+                         continue; // Skip if range is invalid
+                    }
+
+                    const annotationRange = new vscode.Range(annotationStartLine, 0, annotationEndLine, 0);
+                    const annotationText = document.getText(annotationRange);
+
+                    // Debugging log for the text being parsed for annotations
+                    // console.log(`[discoverEndpoints] Parsing annotations for ${methodSymbol.name} in range L${annotationStartLine+1}-L${annotationEndLine+1}:\n---\n${annotationText}\n---`);
+
+                    const mappingInfo = parseMappingAnnotations(annotationText);
+
+                    // CRITICAL FIX: Only proceed if a valid mapping annotation WAS found for the METHOD
+                    if (!mappingInfo || !mappingInfo.httpMethod) {
+                        // console.log(`[discoverEndpoints] No valid mapping found for method: ${methodSymbol.name}`);
+                        continue; // Skip methods without explicit REST mapping annotations
+                    }
+
+                    // Iterate through all paths defined in the method annotation
+                    for (const methodPathSegment of mappingInfo.paths) {
+                        if (token.isCancellationRequested) break;
+
+                        // Combine base path and this specific method path segment
+                        const methodPath = normalizePath(methodPathSegment || '');
+                        const fullPath = combinePaths(basePath, methodPath);
+
+                        console.log(`[discoverEndpoints] Found: ${mappingInfo.httpMethod} ${fullPath} in ${uri.fsPath} (Class: ${classSymbol.name}, Method: ${methodSymbol.name})`);
+
+                        endpoints.push({
+                            method: mappingInfo.httpMethod,
+                            path: fullPath, // Use combined path
+                            uri: uri,
+                            position: methodSymbol.selectionRange.start, // Position of method name
+                            handlerMethodName: methodSymbol.name
+                            // TODO: Add description parsing from Javadoc/comments if needed
+                        });
+                    }
+                    if (token.isCancellationRequested) break; // Break outer loop if cancelled in inner
                 }
             }
 

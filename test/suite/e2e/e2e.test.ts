@@ -37,11 +37,12 @@ const commandKeywords = [
 	'annotation'
 ];
 
+const lspInitializationDelay = 20000; // 20 seconds - adjust if needed
+
 suite('E2E Test Suite - Annotation Discovery', () => { // Updated suite name
 	vscode.window.showInformationMessage('[E2E] Start Annotation Discovery tests.');
 
 	// Define LSP wait time outside the test to be accessible by timeout
-	const lspInitializationDelay = 30000; // 30 seconds - adjust if needed
 
 	test('Should discover Spring Boot annotations using LSP', async () => {
 		console.log('[E2E Test] Starting test: Should discover Spring Boot annotations...');
@@ -150,9 +151,6 @@ suite('E2E Test Suite - Annotation Discovery', () => { // Updated suite name
 suite('E2E Test Suite - Document Symbol Discovery', () => { // Updated suite name
 	vscode.window.showInformationMessage('[E2E] Start Document Symbol tests.');
 
-	// Define LSP wait time outside the test to be accessible by timeout
-	const lspInitializationDelay = 30000; // 30 seconds - adjust if needed
-
 	test('Should discover symbols in TestController.java using LSP', async () => { // Updated test name
 		console.log('[E2E Test] Starting test: Should discover document symbols...');
 		// Ensure a workspace folder is open
@@ -248,9 +246,6 @@ suite('E2E Test Suite - Document Symbol Discovery', () => { // Updated suite nam
 
 suite('E2E Test Suite - Hover Provider Discovery', () => { // Updated suite name
 	vscode.window.showInformationMessage('[E2E] Start Hover Provider tests.');
-
-	// Define LSP wait time outside the test to be accessible by timeout
-	const lspInitializationDelay = 30000; // 30 seconds - adjust if needed
 
 	test('Should get hover info for Spring annotations using LSP', async () => { // Updated test name
 		console.log('[E2E Test] Starting test: Should get hover info...');
@@ -349,9 +344,6 @@ suite('E2E Test Suite - Hover Provider Discovery', () => { // Updated suite name
 
 suite('E2E Test Suite - Command Discovery', () => { // Updated suite name
 	vscode.window.showInformationMessage('[E2E] Start Command Discovery tests.');
-
-	// Define LSP wait time outside the test to be accessible by timeout
-	const lspInitializationDelay = 30000; // 30 seconds - adjust if needed
 
 	test('Should list potentially relevant Java/Spring commands', async () => { // Updated test name
 		console.log('[E2E Test] Starting test: Should list commands...');

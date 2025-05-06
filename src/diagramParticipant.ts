@@ -386,7 +386,14 @@ async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQ
         stream.progress(`Found ${allEndpoints.length} endpoints. Identifying target...`);
 
         // Call disambiguation function
-        const targetEndpoint = await disambiguateEndpoint(naturalLanguageQuery, allEndpoints, stream, token);
+        const targetEndpoint = await disambiguateEndpoint(
+            naturalLanguageQuery,
+            allEndpoints,
+            stream,
+            token,
+            params.lm,      // Pass lm
+            params.logger   // Pass logger
+        );
 
         if (token.isCancellationRequested) {
             logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });

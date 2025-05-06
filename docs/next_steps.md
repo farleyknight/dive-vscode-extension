@@ -4,10 +4,14 @@ This file provides a high-level overview of the current development focus.
 
 ## Current Focus
 
-The primary focus is completing the **Endpoint Discovery and Disambiguation** phase for the `/restEndpoint` feature.
+The **Endpoint Discovery and Disambiguation** phase for the `/restEndpoint` feature is considered sufficient for an MVP.
 
-*   **Current Task:** Implement chat-based clarification for ambiguous endpoint selection in `disambiguateEndpoint` (replacing the QuickPick UI). Update corresponding unit tests.
-*   **Detailed Status & Plan:** See `docs/rest_endpoint_feature.md`
+*   **Current Task:** The top priority is to implement the **Call Hierarchy** feature for selected endpoints (MVP). This involves:
+    *   Creating `src/call-hierarchy.ts` for the main logic.
+    *   Creating `test/suite/call-hierarchy.test.ts` for unit tests.
+    *   Implementing the `findCallers` function within `src/call-hierarchy.ts` to identify direct callers of a given function/method name using a workspace-wide text search for the MVP.
+    *   Defining necessary data structures like `CallLocation` and `CallHierarchyResult`.
+*   **Detailed Status & Plan:** See `docs/rest_endpoint_feature.md` and the newly added call hierarchy section within it.
 
 ## Guiding Principles
 

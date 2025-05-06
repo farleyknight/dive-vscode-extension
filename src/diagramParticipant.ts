@@ -352,7 +352,7 @@ Please generate a Mermaid sequence diagram (\`sequenceDiagram\`) showing the cal
 }
 
 // Handler for /restEndpoint command
-async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
+export async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
     const { stream, token, logger } = params;
     logger.logUsage('request', { kind: 'restEndpoint', status: 'started', query: naturalLanguageQuery });
     const startTime = Date.now();
@@ -414,9 +414,21 @@ async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQ
 
         // TODO: Implement Step 3: Java LSP Call Hierarchy Integration using targetEndpoint.uri and targetEndpoint.position
         stream.markdown(`Okay, I've identified the endpoint: \`${targetEndpoint.method} ${targetEndpoint.path}\` in \`${path.basename(targetEndpoint.uri.fsPath)}\`.`);
-        stream.markdown("Next steps would involve using the Java LSP to find its call hierarchy and generate the sequence diagram. This part is not yet implemented.");
+        // stream.markdown("Next steps would involve using the Java LSP to find its call hierarchy and generate the sequence diagram. This part is not yet implemented.");
 
-        logger.logUsage('request', { kind: 'restEndpoint', status: 'processed_stub', duration: Date.now() - startTime });
+        // Attempt to show Call Hierarchy using the Java extension's command
+        try {
+            await vscode.commands.executeCommand('java.showCallHierarchy', targetEndpoint.uri, targetEndpoint.position);
+            stream.markdown("Attempted to display call hierarchy. Please check the standard VS Code Call Hierarchy view.");
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_invoked', duration: Date.now() - startTime });
+        } catch (chError) {
+            const errorMessage = chError instanceof Error ? chError.message : String(chError);
+            logger.logError(chError instanceof Error ? chError : new Error(String(chError)), { kind: 'restEndpoint', stage: 'call_hierarchy_command' });
+            stream.markdown(`Failed to invoke call hierarchy: ${errorMessage}`);
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_error', duration: Date.now() - startTime, error: errorMessage });
+        }
+
+        // logger.logUsage('request', { kind: 'restEndpoint', status: 'processed_stub', duration: Date.now() - startTime });
 
     } catch (err) {
         handleError(logger, err, stream);

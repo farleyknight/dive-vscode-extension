@@ -50,20 +50,3 @@ Allow users to generate a sequence diagram visualizing the call hierarchy for a 
         *   **ii. Develop LLM Prompt/Parsing:** *(Done - Initial version)*
         *   **iii. User Interface for Fallback:** Craft `stream.markdown` message. *(Needs Implementation)*
         *   **iv. Progress/Error Handling:** Refine messages. *(Partially Done)*
-
-3.  **Call Hierarchy (MVP - New Focus):**
-    *   **Goal:** Given a specific function (e.g., an endpoint handler from `EndpointInfo`), identify its direct callers within the workspace.
-    *   **Files:**
-        *   Implementation: `src/call-hierarchy.ts`
-        *   Tests: `test/suite/call-hierarchy.test.ts`
-    *   **Main Function:** `async function findCallers(endpoint: EndpointInfo): Promise<CallHierarchyResult | null>`
-    *   **Data Structures:**
-        *   `CallLocation { uri: vscode.Uri; range: vscode.Range; callingFunction?: string; }`
-        *   `CallHierarchyResult { targetFunction: EndpointInfo; callers: CallLocation[]; }`
-    *   **MVP Implementation Strategy:**
-        *   Use a workspace-wide text search (e.g., regex-based) for the `endpoint.handlerMethodName`.
-        *   Filter out definitions and comments.
-        *   Focus on common call patterns, avoiding full AST parsing for MVP.
-    *   **Unit Tests:** Cover scenarios like no callers, single/multiple callers, callers in same/different files, ignoring definitions/comments.
-
-4.  **Java LSP Call Hierarchy Integration:** *(Next - Depends on successful disambiguation and MVP Call Hierarchy)*

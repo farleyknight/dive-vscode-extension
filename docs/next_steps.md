@@ -4,14 +4,11 @@ This file provides a high-level overview of the current development focus.
 
 ## Current Focus
 
-The **Endpoint Discovery and Disambiguation** phase for the `/restEndpoint` feature is considered sufficient for an MVP.
+The primary focus has shifted to implementing the **Call Hierarchy** feature for `/restEndpoint`. We are taking an MVP (Minimum Viable Product) approach to get this working end-to-end.
 
-*   **Current Task:** The top priority is to implement the **Call Hierarchy** feature for selected endpoints (MVP). This involves:
-    *   Creating `src/call-hierarchy.ts` for the main logic.
-    *   Creating `test/suite/call-hierarchy.test.ts` for unit tests.
-    *   Implementing the `findCallers` function within `src/call-hierarchy.ts` to identify direct callers of a given function/method name using a workspace-wide text search for the MVP.
-    *   Defining necessary data structures like `CallLocation` and `CallHierarchyResult`.
-*   **Detailed Status & Plan:** See `docs/rest_endpoint_feature.md` and the newly added call hierarchy section within it.
+*   **Previous Task (Endpoint Disambiguation):** While the initial implementation of endpoint disambiguation seems to handle simple cases, we will revisit further enhancements after the MVP for call hierarchy is established.
+*   **Current Top Priority:** Design and implement the call hierarchy determination for a selected endpoint.
+*   **Detailed Status & Plan:** See `docs/rest_endpoint_feature.md` (this document may also need updates to reflect the new priority).
 
 ## Guiding Principles
 

@@ -1,7 +1,111 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { discoverEndpoints, EndpointInfo, parseMappingAnnotations, findControllerClasses, findEndpointsInClass } from '../../src/endpoint-discovery'; // Adjust path if needed
+import { discoverEndpoints, EndpointInfo, parseMappingAnnotations, findControllerClasses, findEndpointsInClass, combinePaths, getControllerDetailsFromClassAnnotationText } from '../../src/endpoint-discovery'; // Adjust path if needed
 import * as sinon from 'sinon'; // Using sinon for mocking
+
+// Helper function to create a more complete and reusable mock TextDocument
+function createFullMockTextDocument(uri: vscode.Uri, content: string): vscode.TextDocument {
+	const lines = content.split('\n');
+	const lineCount = lines.length;
+
+	return {
+		uri,
+		lineCount,
+		getText: sinon.stub().callsFake((range?: vscode.Range): string => {
+			if (!range) {
+				return content;
+			}
+			let extractedText = '';
+			for (let i = range.start.line; i <= range.end.line; i++) {
+				if (i >= lineCount) break;
+				const lineContent = lines[i];
+				let lineToAppend = '';
+
+				if (i === range.start.line && i === range.end.line) { // Range is on a single line
+					lineToAppend = lineContent.substring(range.start.character, range.end.character);
+				} else if (i === range.start.line) { // First line of a multi-line range
+					lineToAppend = lineContent.substring(range.start.character);
+				} else if (i === range.end.line) { // Last line of a multi-line range
+					lineToAppend = lineContent.substring(0, range.end.character);
+				} else { // A full line in between start and end lines
+					lineToAppend = lineContent;
+				}
+				extractedText += lineToAppend;
+				if (i < range.end.line) { // Add newline if it's not the last line of the range
+					extractedText += '\n';
+				}
+			}
+			return extractedText;
+		}),
+		fileName: uri.fsPath,
+		isUntitled: false,
+		languageId: 'java', // Default to java, can be parameterized if needed
+		version: 1,
+		isDirty: false,
+		isClosed: false,
+		save: sinon.stub().resolves(true),
+		eol: vscode.EndOfLine.LF,
+		lineAt: sinon.stub().callsFake((lineOrPosition: number | vscode.Position): vscode.TextLine => {
+			const lineNumber = typeof lineOrPosition === 'number' ? lineOrPosition : lineOrPosition.line;
+			if (lineNumber < 0 || lineNumber >= lineCount) {
+				// Behavior of real lineAt for out-of-bounds is to throw.
+				// For robust testing, ensure tests provide valid lines or handle expected errors.
+				throw new Error(`Mock lineAt: Line number ${lineNumber} is out of bounds (0-${lineCount - 1}).`);
+			}
+			const lineText = lines[lineNumber];
+			return {
+				lineNumber,
+				text: lineText,
+				range: new vscode.Range(lineNumber, 0, lineNumber, lineText.length),
+				rangeIncludingLineBreak: new vscode.Range(lineNumber, 0, lineNumber + (lineNumber === lineCount - 1 ? 0 : 1), lineNumber === lineCount - 1 ? lineText.length : 0),
+				firstNonWhitespaceCharacterIndex: lineText.search(/S|$/),
+				isEmptyOrWhitespace: lineText.trim().length === 0,
+			};
+		}),
+		offsetAt: sinon.stub().callsFake((position: vscode.Position): number => { // Basic implementation
+			let offset = 0;
+			for (let i = 0; i < position.line; i++) {
+				if (i < lines.length) {
+					offset += lines[i].length + 1; // +1 for newline
+				} else {
+					 throw new Error(`Mock offsetAt: Line number ${i} is out of bounds.`);
+				}
+			}
+			if (position.line < lines.length) {
+				offset += Math.min(position.character, lines[position.line].length);
+			} else if (position.line === lines.length && position.character === 0) {
+				// Position at the very end of the document (after the last newline)
+			}
+			 else {
+				throw new Error(`Mock offsetAt: Position ${position.line}:${position.character} is out of bounds.`);
+			}
+			return Math.min(offset, content.length); // Ensure not out of bounds of total content
+		}),
+		positionAt: sinon.stub().callsFake((offset: number): vscode.Position => { // Basic implementation
+			if (offset < 0) throw new Error("Offset cannot be negative.");
+			if (offset > content.length) offset = content.length; // Cap offset at content length
+
+			let currentOffset = 0;
+			for (let i = 0; i < lines.length; i++) {
+				const lineLengthWithNewline = lines[i].length + (i < lines.length - 1 ? 1 : 0);
+				if (offset <= currentOffset + lineLengthWithNewline) {
+					// If offset is exactly at newline, it should be start of next line,
+					// unless it's the very end of the content after the last line.
+					if (offset === currentOffset + lines[i].length + 1 && i < lines.length -1) {
+						 return new vscode.Position(i + 1, 0);
+					}
+					return new vscode.Position(i, offset - currentOffset);
+				}
+				currentOffset += lineLengthWithNewline;
+			}
+			// If offset is at the very end of the content (potentially after the last character of the last line)
+			return new vscode.Position(lines.length > 0 ? lines.length - 1 : 0, lines.length > 0 ? lines[lines.length -1].length : 0);
+		}),
+		validateRange: sinon.stub().callsFake(range => range), // Pass-through
+		validatePosition: sinon.stub().callsFake(pos => pos), // Pass-through
+		getWordRangeAtPosition: sinon.stub(), // Not implemented, add if needed
+	} as unknown as vscode.TextDocument;
+}
 
 // // Check the environment variable value - REMOVED
 // console.log(`[endpoint-discovery.test.ts] Checking DIVE_TEST_GLOB: ${process.env.DIVE_TEST_GLOB}`);
@@ -63,35 +167,7 @@ public class TestController { // Line 7 Definition starts
 		}
 }
 `;
-		// Use the more robust getText mock
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				const lines = mockDocumentContent.split('\n');
-				let extractedText = '';
-				for (let i = range.start.line; i <= range.end.line; i++) {
-					if (i >= lines.length) break;
-					const lineContent = lines[i];
-					let lineToAppend = '';
-					if (i === range.start.line && i === range.end.line) {
-						lineToAppend = lineContent.substring(range.start.character, range.end.character);
-					} else if (i === range.start.line) {
-						lineToAppend = lineContent.substring(range.start.character);
-					} else if (i === range.end.line) {
-						lineToAppend = lineContent.substring(0, range.end.character);
-					} else {
-						lineToAppend = lineContent;
-					}
-					extractedText += lineToAppend;
-					if (i < range.end.line) { extractedText += '\n'; }
-				}
-				// Optional: Keep the log here for debugging this specific test if needed
-                // console.log(`[Mock getText - Failing Test] Range: L${range.start.line+1}C${range.start.character+1}-L${range.end.line+1}C${range.end.character+1} => "${extractedText.replace(/\n/g, '\\n')}"`);
-				return extractedText;
-			}),
-		} as unknown as vscode.TextDocument; // Cast to unknown first
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		// Use a matcher for the URI in withArgs if direct comparison fails
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
@@ -244,29 +320,7 @@ public class StandardController { // Line 8
     }
 }
 `;
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				// **Simplified Mock Logic**
-				const lines = mockDocumentContent.split('\n');
-				if (range.isSingleLine && range.start.line < lines.length) {
-					return lines[range.start.line].substring(range.start.character, range.end.character);
-				}
-                if (range.start.line < lines.length) {
-                    let text = lines[range.start.line].substring(range.start.character);
-                    for (let i = range.start.line + 1; i < range.end.line && i < lines.length; i++) {
-                         text += '\n' + lines[i];
-                    }
-                     if (range.end.line > range.start.line && range.end.line < lines.length) {
-                         text += '\n' + lines[range.end.line].substring(0, range.end.character);
-                     }
-                    return text;
-                }
-				return '';
-			}),
-		} as unknown as vscode.TextDocument;
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
 		// Mock Document Symbols
@@ -386,29 +440,7 @@ public class PathVariableController { // Line 7
     }
 }
 `;
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				// **Simplified Mock Logic**
-				const lines = mockDocumentContent.split('\n');
-				if (range.isSingleLine && range.start.line < lines.length) {
-					return lines[range.start.line].substring(range.start.character, range.end.character);
-				}
-                if (range.start.line < lines.length) {
-                    let text = lines[range.start.line].substring(range.start.character);
-                    for (let i = range.start.line + 1; i < range.end.line && i < lines.length; i++) {
-                         text += '\n' + lines[i];
-                    }
-                     if (range.end.line > range.start.line && range.end.line < lines.length) {
-                         text += '\n' + lines[range.end.line].substring(0, range.end.character);
-                     }
-                    return text;
-                }
-				return '';
-			}),
-		} as unknown as vscode.TextDocument;
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
 		// Mock Document Symbols
@@ -489,29 +521,7 @@ public class UtilityClass { // Line 5
     }
 }
 `;
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				// **Simplified Mock Logic**
-				const lines = mockDocumentContent.split('\n');
-				if (range.isSingleLine && range.start.line < lines.length) {
-					return lines[range.start.line].substring(range.start.character, range.end.character);
-				}
-                if (range.start.line < lines.length) {
-                    let text = lines[range.start.line].substring(range.start.character);
-                    for (let i = range.start.line + 1; i < range.end.line && i < lines.length; i++) {
-                         text += '\n' + lines[i];
-                    }
-                     if (range.end.line > range.start.line && range.end.line < lines.length) {
-                         text += '\n' + lines[range.end.line].substring(0, range.end.character);
-                     }
-                    return text;
-                }
-				return '';
-			}),
-		} as unknown as vscode.TextDocument;
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
 		// Mock Document Symbols - Even if symbols exist, they shouldn't be processed
@@ -577,29 +587,7 @@ public class ProductController { // Line 17
     public String getProduct(@PathVariable String id) { return "Product " + id; } // Line 20
 }
 `;
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				// **Simplified Mock Logic**
-				const lines = mockDocumentContent.split('\n');
-				if (range.isSingleLine && range.start.line < lines.length) {
-					return lines[range.start.line].substring(range.start.character, range.end.character);
-				}
-                if (range.start.line < lines.length) {
-                    let text = lines[range.start.line].substring(range.start.character);
-                    for (let i = range.start.line + 1; i < range.end.line && i < lines.length; i++) {
-                         text += '\n' + lines[i];
-                    }
-                     if (range.end.line > range.start.line && range.end.line < lines.length) {
-                         text += '\n' + lines[range.end.line].substring(0, range.end.character);
-                     }
-                    return text;
-                }
-				return '';
-			}),
-		} as unknown as vscode.TextDocument;
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
 		// Mock Document Symbols for BOTH controllers
@@ -695,29 +683,7 @@ public class MultiLineAnnoController { // Line 10
     }
 }
 `;
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				// **Simplified Mock Logic**
-				const lines = mockDocumentContent.split('\n');
-				if (range.isSingleLine && range.start.line < lines.length) {
-					return lines[range.start.line].substring(range.start.character, range.end.character);
-				}
-                if (range.start.line < lines.length) {
-                    let text = lines[range.start.line].substring(range.start.character);
-                    for (let i = range.start.line + 1; i < range.end.line && i < lines.length; i++) {
-                         text += '\n' + lines[i];
-                    }
-                     if (range.end.line > range.start.line && range.end.line < lines.length) {
-                         text += '\n' + lines[range.end.line].substring(0, range.end.character);
-                     }
-                    return text;
-                }
-				return '';
-			}),
-		} as unknown as vscode.TextDocument;
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
 		// Mock Document Symbols
@@ -825,29 +791,7 @@ public class NoEndpointsController { // Line 6
     }
 }
 `;
-		const mockTextDocument = {
-			uri: mockUri,
-			lineCount: mockDocumentContent.split('\n').length,
-			getText: sinon.stub().callsFake((range?: vscode.Range) => {
-				if (!range) return mockDocumentContent;
-				// **Simplified Mock Logic**
-				const lines = mockDocumentContent.split('\n');
-				if (range.isSingleLine && range.start.line < lines.length) {
-					return lines[range.start.line].substring(range.start.character, range.end.character);
-				}
-                if (range.start.line < lines.length) {
-                    let text = lines[range.start.line].substring(range.start.character);
-                    for (let i = range.start.line + 1; i < range.end.line && i < lines.length; i++) {
-                         text += '\n' + lines[i];
-                    }
-                     if (range.end.line > range.start.line && range.end.line < lines.length) {
-                         text += '\n' + lines[range.end.line].substring(0, range.end.character);
-                     }
-                    return text;
-                }
-				return '';
-			}),
-		} as unknown as vscode.TextDocument;
+		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
 		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
 
 		// Mock Document Symbols
@@ -1041,448 +985,134 @@ public class NoEndpointsController { // Line 6
 
 	});
 
+	// Suite for testing combinePaths helper function
+	suite('combinePaths Suite', () => {
+		test('Should combine valid base and method paths', () => {
+			assert.strictEqual(combinePaths("/api/users", "/{id}"), "/api/users/{id}");
+			assert.strictEqual(combinePaths("/api/users", "details"), "/api/users/details");
+		});
+
+		test('Should handle base path being root or empty', () => {
+			assert.strictEqual(combinePaths("/", "/todos"), "/todos");
+			assert.strictEqual(combinePaths("", "/todos"), "/todos");
+			assert.strictEqual(combinePaths("/", "todos"), "/todos");
+		});
+
+		test('Should handle method path being root or empty', () => {
+			assert.strictEqual(combinePaths("/api/tasks", "/"), "/api/tasks");
+			assert.strictEqual(combinePaths("/api/tasks", ""), "/api/tasks");
+		});
+
+		test('Should handle both paths being root or empty', () => {
+			assert.strictEqual(combinePaths("/", "/"), "/");
+			assert.strictEqual(combinePaths("", ""), "/"); // Current behavior, empty strings result in "/"
+			assert.strictEqual(combinePaths("/", ""), "/");
+			assert.strictEqual(combinePaths("", "/"), "/");
+		});
+
+		test('Should normalize leading/trailing slashes', () => {
+			assert.strictEqual(combinePaths("api/users/", "/{id}/"), "/api/users/{id}");
+			assert.strictEqual(combinePaths("/api/users/", "{id}"), "/api/users/{id}");
+			assert.strictEqual(combinePaths("api/users", "/{id}"), "/api/users/{id}");
+			assert.strictEqual(combinePaths("api/items", "subitem"), "/api/items/subitem");
+		});
+
+		test('Should handle more complex combinations', () => {
+			assert.strictEqual(combinePaths("/api/v1/", "/items/{itemId}/parts"), "/api/v1/items/{itemId}/parts");
+			assert.strictEqual(combinePaths("api/v2", "items/{itemId}/parts/"), "/api/v2/items/{itemId}/parts");
+		});
+
+		test('Should handle paths that are just variables', () => {
+			assert.strictEqual(combinePaths("/base", "{var}"), "/base/{var}");
+			assert.strictEqual(combinePaths("/{classVar}", "{methodVar}"), "/{classVar}/{methodVar}");
+		});
+
+		test('Should return / if both paths effectively empty after normalization', () => {
+			// normalizePath('') -> '', normalizePath('/') -> '/'
+			// combinePaths('', '') -> calls normalizePath(''), normalizePath('') -> returns '/'
+			// combinePaths('/', '/') -> calls normalizePath('/'), normalizePath('/') -> returns '/'
+			assert.strictEqual(combinePaths("", ""), "/");
+			assert.strictEqual(combinePaths("/", "/"), "/");
+		});
+	});
+
+	// New suite for getControllerDetailsFromClassAnnotationText pure helper
+	suite('getControllerDetailsFromClassAnnotationText Suite', () => {
+		test('Should identify @RestController and default base path', () => {
+			const annotationText = '@RestController\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
+		});
+
+		test('Should identify @Controller and default base path', () => {
+			const annotationText = '@Controller\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
+		});
+
+		test('Should identify @RestController with @RequestMapping path', () => {
+			const annotationText = '@RestController\n@RequestMapping("/api/v1")\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/api/v1' });
+		});
+
+		test('Should identify @Controller with @RequestMapping path', () => {
+			const annotationText = '@Controller\n@RequestMapping("/api/beta")\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/api/beta' });
+		});
+
+		test('Should handle @RequestMapping with no path (defaults to /)', () => {
+			const annotationText = '@RestController\n@RequestMapping\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
+		});
+
+		test('Should handle @RequestMapping with empty string path (defaults to /)', () => {
+			const annotationText = '@Controller\n@RequestMapping("")\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
+		});
+
+		test('Should handle @RequestMapping with just a slash (normalizes to /)', () => {
+			const annotationText = '@Controller\n@RequestMapping("/")\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
+		});
+
+		test('Should return not a controller if no controller annotation present', () => {
+			const annotationText = '@Service\n@RequestMapping("/api/ignored")\npublic class NotACtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: false, basePath: '/' });
+		});
+
+		test('Should handle other annotations mixed in', () => {
+			const annotationText = '@Deprecated\n@RestController\n@RequestMapping("/api/test")\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/api/test' });
+		});
+
+		test('Should be case sensitive for annotations like @controller (not a match)', () => {
+			const annotationText = '@controller\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: false, basePath: '/' });
+		});
+
+		test('Should handle empty input string', () => {
+			const annotationText = '';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: false, basePath: '/' });
+		});
+
+		test('Should normalize paths with trailing slashes from RequestMapping', () => {
+			const annotationText = '@RestController\n@RequestMapping("/api/admin/")\npublic class MyCtrl {}';
+			const result = getControllerDetailsFromClassAnnotationText(annotationText);
+			assert.deepStrictEqual(result, { isController: true, basePath: '/api/admin' });
+		});
+	});
+
 	// ... other test cases
 });
 
 // \=\=\=\= Helper Function Tests \=\=\=\=
-suite('Helper Function: findControllerClasses', () => {
-    let sandbox: sinon.SinonSandbox;
-
-    setup(() => {
-        sandbox = sinon.createSandbox();
-        // No need to stub vscode commands/workspace for direct helper testing
-    });
-
-    teardown(() => {
-        sandbox.restore();
-    });
-
-    // Helper to create mock DocumentSymbol
-    const createMockSymbol = (name: string, kind: vscode.SymbolKind, range: vscode.Range, children: vscode.DocumentSymbol[] = []): vscode.DocumentSymbol => {
-        const symbol = new vscode.DocumentSymbol(name, '', kind, range, range); // Simplified detail
-        symbol.children = children;
-        return symbol;
-    };
-
-    // Helper to create mock TextDocument (using the robust version)
-    const createMockDocument = (content: string): vscode.TextDocument => {
-        return {
-            uri: vscode.Uri.file('/mock/doc.java'),
-            lineCount: content.split('\n').length,
-            getText: sinon.stub().callsFake((range?: vscode.Range) => {
-                if (!range) return content;
-                const lines = content.split('\n');
-                let text = '';
-                for (let i = range.start.line; i < range.end.line; i++) {
-                    if (i >= lines.length) break;
-                    const line = lines[i];
-                    const startChar = (i === range.start.line) ? range.start.character : 0;
-                    const endChar = (i === range.end.line - 1) ? range.end.character : line.length;
-                    text += line.substring(startChar, endChar);
-                    if (i < range.end.line - 1) {
-                        text += '\n';
-                    }
-                }
-                return text;
-            }),
-        } as unknown as vscode.TextDocument;
-    };
-
-    test('Should find a @RestController with base path', async () => {
-        const content = `
-            package com.test;
-            import org.springframework.web.bind.annotation.*;
-
-            @RestController
-            @RequestMapping("/api/v1")
-            public class MyRestController { // Actual class def starts here
-                // ... methods
-            }
-        `;
-        // content.split('\n') -> [0]="", [1]="pkg", [2]="imp", [3]="", [4]="@RestCtrl", [5]="@ReqMap", [6]="public class MyRestController"
-        const mockDocument = createMockDocument(content);
-        const classRange = new vscode.Range(6, 0, 8, 1); // MyRestController is on lines[6] to lines[8] (0-indexed)
-        const mockSymbols = [createMockSymbol('MyRestController', vscode.SymbolKind.Class, classRange)];
-
-        // Act: Call the helper directly
-        const actualControllers = await findControllerClasses(mockDocument, mockSymbols);
-
-        // Assert
-        assert.strictEqual(actualControllers.length, 1, "Should find exactly one controller");
-        const controller = actualControllers[0];
-        assert.strictEqual(controller.classSymbol.name, 'MyRestController', "Controller name mismatch");
-        assert.strictEqual(controller.isRestController, true, "Should be identified as RestController");
-        assert.strictEqual(controller.basePath, '/api/v1', "Base path mismatch");
-    });
-
-    test('Should find a @Controller and default base path', async () => {
-        const content = `
-            package com.test;
-            import org.springframework.stereotype.Controller;
-            import org.springframework.web.bind.annotation.RequestMapping; // Not used on class but ok
-
-            @Controller
-            // No RequestMapping here
-            public class MyStdController { // Actual class def
-                // ... methods
-            }
-        `;
-        // content.split('\n') -> [0]="", [1]="pkg", [2]="imp ctrl", [3]="imp reqmap", [4]="", [5]="@Ctrl", [6]="", [7]="public class MyStdController"
-        const mockDocument = createMockDocument(content);
-        const classRange = new vscode.Range(7, 0, 9, 1); // MyStdController on lines[7] to lines[9]
-        const mockSymbols = [createMockSymbol('MyStdController', vscode.SymbolKind.Class, classRange)];
-
-        // Act
-        const actualControllers = await findControllerClasses(mockDocument, mockSymbols);
-
-        // Assert
-        assert.strictEqual(actualControllers.length, 1, "Should find exactly one controller");
-        const controller = actualControllers[0];
-        assert.strictEqual(controller.classSymbol.name, 'MyStdController');
-        assert.strictEqual(controller.isRestController, true, "Should be identified as Controller");
-        assert.strictEqual(controller.basePath, '/', "Base path should default to /");
-    });
-
-    test('Should ignore classes without controller annotations', async () => {
-        const content = `
-            package com.test;
-
-            public class NotAController { // Line 3
-                // ... methods
-            }
-        `;
-        const mockDocument = createMockDocument(content);
-        const classRange = new vscode.Range(3, 0, 5, 1); // Line 4 -> 6
-        const mockSymbols = [createMockSymbol('NotAController', vscode.SymbolKind.Class, classRange)];
-
-        // Act
-        const actualControllers = await findControllerClasses(mockDocument, mockSymbols);
-
-        // Assert
-        assert.strictEqual(actualControllers.length, 0, "Should find no controllers");
-    });
-
-    test('Should handle multiple classes, finding only the controller', async () => {
-        const content = `
-            package com.test;
-            import org.springframework.stereotype.Controller;
-            import org.springframework.web.bind.annotation.*;
-
-            public class UtilityClass {} // lines[5]
-
-            @Controller // lines[7]
-            @RequestMapping("/ctrl") // lines[8]
-            public class ActualController { // lines[9] - Actual class def
-                @GetMapping("/ping") public String ping() { return "pong"; }
-            }
-
-            @Service
-            public class MyService {}
-        `;
-        // content.split('\n') -> [0]="", [1]="pkg", [2]="imp ctrl", [3]="imp web", [4]="", [5]="public class Util", [6]="", [7]="@Ctrl", [8]="@ReqMap", [9]="public class ActualController"
-        const mockDocument = createMockDocument(content);
-        const utilClassRange = new vscode.Range(5, 0, 5, 28);
-        const ctrlClassRange = new vscode.Range(9, 0, 11, 1); // ActualController on lines[9] to lines[11]
-        const serviceClassRange = new vscode.Range(14, 0, 14, 29);
-        const methodRange = new vscode.Range(10, 16, 10, 59);
-
-        const ctrlSymbol = createMockSymbol('ActualController', vscode.SymbolKind.Class, ctrlClassRange, [
-             createMockSymbol('ping', vscode.SymbolKind.Method, methodRange)
-        ]);
-
-        const mockSymbols = [
-            createMockSymbol('UtilityClass', vscode.SymbolKind.Class, utilClassRange),
-            ctrlSymbol,
-            createMockSymbol('MyService', vscode.SymbolKind.Class, serviceClassRange),
-        ];
-
-        // Act
-        const actualControllers = await findControllerClasses(mockDocument, mockSymbols);
-
-        // Assert
-        assert.strictEqual(actualControllers.length, 1, "Should find exactly one controller");
-        const controller = actualControllers[0];
-        assert.strictEqual(controller.classSymbol.name, 'ActualController');
-        assert.strictEqual(controller.isRestController, true);
-        assert.strictEqual(controller.basePath, '/ctrl');
-    });
-
-     test('Should handle controller with NO RequestMapping (default base path /)', async () => {
-        const content = `
-            package com.test;
-            import org.springframework.web.bind.annotation.*;
-
-            @RestController
-            public class RootController { // Actual class def
-                @GetMapping("/status") public String status() { return "OK"; }
-            }
-        `;
-        // content.split('\n') -> [0]="", [1]="pkg", [2]="imp", [3]="", [4]="@RestCtrl", [5]="public class RootController"
-        const mockDocument = createMockDocument(content);
-        const classRange = new vscode.Range(5, 0, 7, 1); // RootController on lines[5] to lines[7]
-        // Note: Method symbol range doesn't affect findControllerClasses directly
-        const methodRange = new vscode.Range(6, 17, 6, 58);
-        const classSymbol = createMockSymbol('RootController', vscode.SymbolKind.Class, classRange, [
-            createMockSymbol('status', vscode.SymbolKind.Method, methodRange)
-        ]);
-
-        // Act
-        const actualControllers = await findControllerClasses(mockDocument, [classSymbol]);
-
-        // Assert
-        assert.strictEqual(actualControllers.length, 1, "Should find one controller");
-        const controller = actualControllers[0];
-        assert.strictEqual(controller.classSymbol.name, 'RootController');
-        assert.strictEqual(controller.isRestController, true);
-        assert.strictEqual(controller.basePath, '/', "Base path should default to /");
-        // console.log('\n[TEST DEBUG] Test finished for RootController.\n'); // Keep commented out
-    });
-
-});
-
-// \=\=\=\= Helper Function Tests: findEndpointsInClass \=\=\=\=
-suite('Helper Function: findEndpointsInClass', () => {
-    let sandbox: sinon.SinonSandbox;
-
-    // Helper to create mock DocumentSymbol (can be reused or adapted from findControllerClasses tests)
-    const createMockSymbol = (name: string, kind: vscode.SymbolKind, range: vscode.Range, selectionRange: vscode.Range, children: vscode.DocumentSymbol[] = []): vscode.DocumentSymbol => {
-        const symbol = new vscode.DocumentSymbol(name, '', kind, range, selectionRange);
-        symbol.children = children;
-        return symbol;
-    };
-
-    // Helper to create mock TextDocument (can be reused)
-    const createMockDocument = (content: string, uriPath: string = '/mock/doc.java'): vscode.TextDocument => {
-        return {
-            uri: vscode.Uri.file(uriPath),
-            lineCount: content.split('\n').length,
-            getText: sinon.stub().callsFake((range?: vscode.Range) => {
-                if (!range) return content;
-                const lines = content.split('\n');
-                let extractedText = '';
-                for (let i = range.start.line; i <= range.end.line; i++) {
-                    if (i >= lines.length) break;
-                    const lineContent = lines[i];
-                    let lineToAppend = '';
-                    if (i === range.start.line && i === range.end.line) {
-                        lineToAppend = lineContent.substring(range.start.character, range.end.character);
-                    } else if (i === range.start.line) {
-                        lineToAppend = lineContent.substring(range.start.character);
-                    } else if (i === range.end.line) {
-                        lineToAppend = lineContent.substring(0, range.end.character);
-                    } else {
-                        lineToAppend = lineContent;
-                    }
-                    extractedText += lineToAppend;
-                    if (i < range.end.line) { extractedText += '\n'; }
-                }
-                return extractedText;
-            }),
-        } as unknown as vscode.TextDocument;
-    };
-
-    const mockToken: vscode.CancellationToken = {
-        isCancellationRequested: false,
-        onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-    };
-
-    setup(() => {
-        sandbox = sinon.createSandbox();
-    });
-
-    teardown(() => {
-        sandbox.restore();
-    });
-
-    test('Should find a simple GetMapping method in a class', async () => {
-        const content = `
-package com.example;
-
-@RestController
-@RequestMapping("/api")
-public class MyController { // line 4 (0-indexed assuming leading newline in content string)
-
-    @GetMapping("/hello") // line 6
-    public String sayHello() { // line 7, selectionRange likely here
-        return "Hello";
-    } // line 9
-}
-        `;
-        // line indices after content.split('\n'):
-        // 0: ""
-        // 1: "package com.example;"
-        // 2: ""
-        // 3: "@RestController"
-        // 4: "@RequestMapping(\"/api\")"
-        // 5: "public class MyController { // line 4..."
-        // 6: ""
-        // 7: "    @GetMapping(\"/hello\") // line 6"
-        // 8: "    public String sayHello() { // line 7..."
-        // 9: "        return \"Hello\";"
-        // 10: "    } // line 9"
-        // 11: "}"
-
-        const mockDoc = createMockDocument(content, '/mock/MyController.java');
-        const basePath = "/api";
-
-        const methodSelectionRange = new vscode.Range(8, 4, 8, 29); // "public String sayHello() { // line 7..."
-        const methodFullRange = new vscode.Range(8, 4, 10, 5);    // Includes method body up to its closing brace
-
-        const methodSymbol = createMockSymbol('sayHello', vscode.SymbolKind.Method, methodFullRange, methodSelectionRange);
-
-        // Class symbol: its range should encompass the method. Class definition is on lines[5].
-        const classFullRange = new vscode.Range(5, 0, 11, 1); // From "public class MyController..." to its closing "}"
-        // Selection range for class can be just the name, but full range is more important here.
-        const classSelectionRange = new vscode.Range(5, 13, 5, 25); // "MyController"
-        const classSymbol = createMockSymbol('MyController', vscode.SymbolKind.Class, classFullRange, classSelectionRange, [methodSymbol]);
-
-        // Act
-        const endpoints = await findEndpointsInClass(mockDoc, classSymbol, basePath, mockToken);
-
-        // Assert
-        assert.strictEqual(endpoints.length, 1, "Should find one endpoint");
-        const endpoint = endpoints[0];
-        assert.strictEqual(endpoint.method, "GET", "HTTP method mismatch");
-        assert.strictEqual(endpoint.path, "/api/hello", "Path mismatch");
-        assert.strictEqual(endpoint.handlerMethodName, "sayHello", "Handler name mismatch");
-        assert.strictEqual(endpoint.uri.fsPath, '/mock/MyController.java', "URI fsPath mismatch");
-        assert.deepStrictEqual(endpoint.position, methodSelectionRange.start, "Position mismatch");
-    });
-
-    test('Should handle multiple methods, some mapped, some not', async () => {
-        const content = `
-package com.example;
-
-@RestController
-@RequestMapping("/base")
-public class MultiMethodController { // lines[5]
-
-    @GetMapping("/first") // lines[7]
-    public String getFirst() { return "first"; } // lines[8]
-
-    // This is not an endpoint
-    private void helperMethod() {} // lines[11]
-
-    @PostMapping("/second") // lines[13]
-    public String postSecond(@RequestBody String data) { return "second:" + data; } // lines[14]
-
-    public String anotherNonEndpoint() { return "";} // lines[16]
-
-    @GetMapping // Mapped to /base due to no path here
-    public String getBase() { return "base"; } // lines[19]
-}
-        `;
-        // 0: ""
-        // 1: "package com.example;"
-        // ...
-        // 5: "public class MultiMethodController { ..."
-        // 7: "    @GetMapping(\"/first\")"
-        // 8: "    public String getFirst() { ... }"
-        // 11: "    private void helperMethod() {}"
-        // 13: "    @PostMapping(\"/second\")"
-        // 14: "    public String postSecond(...){ ... }"
-        // 16: "    public String anotherNonEndpoint() { ... }"
-        // 18: "    @GetMapping"
-        // 19: "    public String getBase() { ... }"
-        // 20: "}"
-
-        const mockDoc = createMockDocument(content, '/mock/MultiMethodController.java');
-        const basePath = "/base";
-
-        const getFirstSelection = new vscode.Range(8, 4, 8, 35); // "public String getFirst() { return ..."
-        const getFirstFull = new vscode.Range(8, 4, 8, 48); // Includes body
-        const helperSelection = new vscode.Range(11, 4, 11, 32);
-        const helperFull = new vscode.Range(11, 4, 11, 34);
-        const postSecondSelection = new vscode.Range(14, 4, 14, 64);
-        const postSecondFull = new vscode.Range(14, 4, 14, 79);
-        const anotherNonEndpointSelection = new vscode.Range(16, 4, 16, 46);
-        const anotherNonEndpointFull = new vscode.Range(16, 4, 16, 48);
-        const getBaseSelection = new vscode.Range(19, 4, 19, 39);
-        const getBaseFull = new vscode.Range(19, 4, 19, 53);
-
-        const methodSymbols = [
-            createMockSymbol('getFirst', vscode.SymbolKind.Method, getFirstFull, getFirstSelection),
-            createMockSymbol('helperMethod', vscode.SymbolKind.Method, helperFull, helperSelection), // Not an endpoint
-            createMockSymbol('postSecond', vscode.SymbolKind.Method, postSecondFull, postSecondSelection),
-            createMockSymbol('anotherNonEndpoint', vscode.SymbolKind.Method, anotherNonEndpointFull, anotherNonEndpointSelection), // Not an endpoint
-            createMockSymbol('getBase', vscode.SymbolKind.Method, getBaseFull, getBaseSelection),
-        ];
-
-        const classFullRange = new vscode.Range(5, 0, 20, 1);
-        const classSelectionRange = new vscode.Range(5, 13, 5, 34); // "MultiMethodController"
-        const classSymbol = createMockSymbol('MultiMethodController', vscode.SymbolKind.Class, classFullRange, classSelectionRange, methodSymbols);
-
-        const endpoints = await findEndpointsInClass(mockDoc, classSymbol, basePath, mockToken);
-
-        assert.strictEqual(endpoints.length, 3, "Should find three endpoints");
-
-        const ep1 = endpoints.find(e => e.handlerMethodName === 'getFirst');
-        assert.ok(ep1, "getFirst endpoint not found");
-        assert.strictEqual(ep1?.method, "GET");
-        assert.strictEqual(ep1?.path, "/base/first");
-        assert.deepStrictEqual(ep1?.position, getFirstSelection.start);
-
-        const ep2 = endpoints.find(e => e.handlerMethodName === 'postSecond');
-        assert.ok(ep2, "postSecond endpoint not found");
-        assert.strictEqual(ep2?.method, "POST");
-        assert.strictEqual(ep2?.path, "/base/second");
-        assert.deepStrictEqual(ep2?.position, postSecondSelection.start);
-
-        const ep3 = endpoints.find(e => e.handlerMethodName === 'getBase');
-        assert.ok(ep3, "getBase endpoint not found");
-        assert.strictEqual(ep3?.method, "GET");
-        assert.strictEqual(ep3?.path, "/base"); // Path defaults to '/' from @GetMapping, combines with basePath
-        assert.deepStrictEqual(ep3?.position, getBaseSelection.start);
-    });
-
-    test('Should return empty array for a class with no mapped methods', async () => {
-        const content = `
-package com.example;
-
-@RestController
-@RequestMapping("/none")
-public class NoMappedMethodsController { // lines[5]
-
-    public String helperOne() { // lines[7]
-        return "helper1";
-    }
-
-    private int calculate(int a, int b) { // lines[11]
-        return a + b;
-    }
-}
-        `;
-        // 0: ""
-        // ...
-        // 5: "public class NoMappedMethodsController { ..."
-        // 7: "    public String helperOne() { ... }"
-        // 11: "    private int calculate(int a, int b) { ... }"
-        // 14: "}"
-
-        const mockDoc = createMockDocument(content, '/mock/NoMappedMethodsController.java');
-        const basePath = "/none";
-
-        const helperOneSelection = new vscode.Range(7, 4, 7, 33);
-        const helperOneFull = new vscode.Range(7, 4, 9, 5);
-        const calculateSelection = new vscode.Range(11, 4, 11, 42);
-        const calculateFull = new vscode.Range(11, 4, 13, 5);
-
-        const methodSymbols = [
-            createMockSymbol('helperOne', vscode.SymbolKind.Method, helperOneFull, helperOneSelection),
-            createMockSymbol('calculate', vscode.SymbolKind.Method, calculateFull, calculateSelection),
-        ];
-
-        const classFullRange = new vscode.Range(5, 0, 14, 1);
-        const classSelectionRange = new vscode.Range(5, 13, 5, 38); // "NoMappedMethodsController"
-        const classSymbol = createMockSymbol('NoMappedMethodsController', vscode.SymbolKind.Class, classFullRange, classSelectionRange, methodSymbols);
-
-        const endpoints = await findEndpointsInClass(mockDoc, classSymbol, basePath, mockToken);
-
-        assert.strictEqual(endpoints.length, 0, "Should find no endpoints");
-    });
-
-    // Add more tests: multi-line annotations for methods etc.
-
-});
-
-// ... E2E Test Suite ... (Keep this at the end or in its own file)
+// ... existing code ...

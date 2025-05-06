@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import createDOMPurify from 'dompurify';
 import { EndpointInfo, discoverEndpoints } from './endpoint-discovery'; // Corrected: discoverEndpoints and EndpointInfo from here
 import { disambiguateEndpoint } from './endpoint-disambiguation'; // Corrected: disambiguateEndpoint from here
+import { buildCallHierarchyTree, CustomHierarchyNode } from './call-hierarchy'; // Import from new module
 // Removed import for MermaidService as it's unused.
 // Removed import for TelemetryService and related types as they are unused.
 // Removed import for Logger as vscode.TelemetryLogger is used.
@@ -353,25 +354,22 @@ Please generate a Mermaid sequence diagram (\`sequenceDiagram\`) showing the cal
 
 // Handler for /restEndpoint command
 export async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
-    const { stream, token, logger } = params;
+    const { stream, token, logger, extensionContext } = params; // Added extensionContext for potential use in buildCallHierarchyTree if stream is passed
     logger.logUsage('request', { kind: 'restEndpoint', status: 'started', query: naturalLanguageQuery });
     const startTime = Date.now();
 
     try {
         stream.progress("Discovering REST endpoints...");
-        const allEndpoints = await discoverEndpoints(token); // Call discovery function
+        const allEndpoints = await discoverEndpoints(token);
 
-        // Report discovered endpoints immediately
         if (allEndpoints && allEndpoints.length > 0) {
             let message = `I found ${allEndpoints.length} REST endpoints:\n\n`;
             for (const ep of allEndpoints) {
                 const fileName = path.basename(ep.uri.fsPath);
-                // Format with 1-based line numbers for display
                 message += `- ${ep.method} ${ep.path} in ${fileName} (lines ${ep.startLine + 1}-${ep.endLine + 1})\n`;
             }
             stream.markdown(message);
         }
-        // Keep the original "no endpoints" check later for cases where discovery succeeds but finds nothing
 
         if (token.isCancellationRequested) {
             logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
@@ -379,8 +377,7 @@ export async function handleRestEndpoint(params: CommandHandlerParams, naturalLa
         }
 
         if (!allEndpoints || allEndpoints.length === 0) {
-            // Message is handled within discoverEndpoints or disambiguateEndpoint if it returns early
-             if (allEndpoints && allEndpoints.length === 0) { // Only log if discovery succeeded but found nothing
+             if (allEndpoints && allEndpoints.length === 0) {
                 stream.markdown("I couldn't find any REST endpoints in this workspace.");
             }
             logger.logUsage('request', { kind: 'restEndpoint', status: 'no_endpoints_found', duration: Date.now() - startTime });
@@ -389,14 +386,13 @@ export async function handleRestEndpoint(params: CommandHandlerParams, naturalLa
 
         stream.progress(`Found ${allEndpoints.length} endpoints. Identifying target...`);
 
-        // Call disambiguation function
         const targetEndpoint = await disambiguateEndpoint(
             naturalLanguageQuery,
             allEndpoints,
             stream,
             token,
-            params.lm,      // Pass lm
-            params.logger   // Pass logger
+            params.lm,
+            params.logger
         );
 
         if (token.isCancellationRequested) {
@@ -405,30 +401,27 @@ export async function handleRestEndpoint(params: CommandHandlerParams, naturalLa
         }
 
         if (!targetEndpoint) {
-            // Message handled within disambiguateEndpoint
             logger.logUsage('request', { kind: 'restEndpoint', status: 'disambiguation_failed', duration: Date.now() - startTime });
             return { metadata: { command: 'restEndpoint' } };
         }
 
-        stream.progress(`Target endpoint identified: ${targetEndpoint.method} ${targetEndpoint.path}. Analyzing call hierarchy...`);
+        stream.progress(`Target endpoint identified: ${targetEndpoint.method} ${targetEndpoint.path}. Building call hierarchy data...`);
 
-        // TODO: Implement Step 3: Java LSP Call Hierarchy Integration using targetEndpoint.uri and targetEndpoint.position
-        stream.markdown(`Okay, I've identified the endpoint: \`${targetEndpoint.method} ${targetEndpoint.path}\` in \`${path.basename(targetEndpoint.uri.fsPath)}\`.`);
-        // stream.markdown("Next steps would involve using the Java LSP to find its call hierarchy and generate the sequence diagram. This part is not yet implemented.");
+        const hierarchyRoot = await buildCallHierarchyTree(targetEndpoint.uri, targetEndpoint.position, logger, token);
 
-        // Attempt to show Call Hierarchy using the Java extension's command
-        try {
-            await vscode.commands.executeCommand('java.showCallHierarchy', targetEndpoint.uri, targetEndpoint.position);
-            stream.markdown("Attempted to display call hierarchy. Please check the standard VS Code Call Hierarchy view.");
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_invoked', duration: Date.now() - startTime });
-        } catch (chError) {
-            const errorMessage = chError instanceof Error ? chError.message : String(chError);
-            logger.logError(chError instanceof Error ? chError : new Error(String(chError)), { kind: 'restEndpoint', stage: 'call_hierarchy_command' });
-            stream.markdown(`Failed to invoke call hierarchy: ${errorMessage}`);
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_error', duration: Date.now() - startTime, error: errorMessage });
+        if (token.isCancellationRequested) {
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled_during_hierarchy_build', duration: Date.now() - startTime });
+            return { metadata: { command: 'restEndpoint' } };
         }
 
-        // logger.logUsage('request', { kind: 'restEndpoint', status: 'processed_stub', duration: Date.now() - startTime });
+        if (hierarchyRoot) {
+            stream.markdown(`Successfully built call hierarchy for ${hierarchyRoot.item.name}. Children: ${hierarchyRoot.children.length}, Parents: ${hierarchyRoot.parents.length}. (Details might be logged).`);
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_built', itemName: hierarchyRoot.item.name, duration: Date.now() - startTime });
+            // Here you would typically do something with hierarchyRoot, e.g., generate a diagram
+        } else {
+            stream.markdown(`Could not build call hierarchy data for ${targetEndpoint.method} ${targetEndpoint.path}.`);
+            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_build_failed', duration: Date.now() - startTime });
+        }
 
     } catch (err) {
         handleError(logger, err, stream);

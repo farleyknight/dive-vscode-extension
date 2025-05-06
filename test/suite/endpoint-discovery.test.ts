@@ -212,8 +212,8 @@ suite('Endpoint Discovery Suite', () => {
 		mockFileSystemProvider.findFiles.resolves([mockUri]);
 
 		const expectedEndpointsFromFile: EndpointInfo[] = [
-			{ method: 'GET', path: '/api/class/method', uri: mockUri as any, position: createMockPosition(11, 4) as any, handlerMethodName: 'getMethod' },
-			{ method: 'POST', path: '/api/class/otherMethod', uri: mockUri as any, position: createMockPosition(17, 4) as any, handlerMethodName: 'postMethod' },
+			{ method: 'GET', path: '/api/class/method', uri: mockUri as any, position: createMockPosition(11, 4) as any, handlerMethodName: 'getMethod', startLine: 0, endLine: 0 },
+			{ method: 'POST', path: '/api/class/otherMethod', uri: mockUri as any, position: createMockPosition(17, 4) as any, handlerMethodName: 'postMethod', startLine: 0, endLine: 0 },
 		];
 
 		processJavaFileForEndpointsStub.withArgs(sinon.match((arg: MockUri) => arg.fsPath === mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
@@ -251,9 +251,9 @@ suite('Endpoint Discovery Suite', () => {
 		const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
 		mockFileSystemProvider.findFiles.resolves([mockUri]);
 		const expectedEndpointsFromFile: EndpointInfo[] = [
-			{ method: 'GET', path: '/std/info', uri: mockUri as any, position: createMockPosition(12, 4) as any, handlerMethodName: 'getInfo' },
-			{ method: 'POST', path: '/std', uri: mockUri as any, position: createMockPosition(22, 4) as any, handlerMethodName: 'createItem' },
-			{ method: 'GET', path: '/std/legacy', uri: mockUri as any, position: createMockPosition(27, 4) as any, handlerMethodName: 'legacyMapping' },
+			{ method: 'GET', path: '/std/info', uri: mockUri as any, position: createMockPosition(12, 4) as any, handlerMethodName: 'getInfo', startLine: 0, endLine: 0 },
+			{ method: 'POST', path: '/std', uri: mockUri as any, position: createMockPosition(22, 4) as any, handlerMethodName: 'createItem', startLine: 0, endLine: 0 },
+			{ method: 'GET', path: '/std/legacy', uri: mockUri as any, position: createMockPosition(27, 4) as any, handlerMethodName: 'legacyMapping', startLine: 0, endLine: 0 },
 		];
 		processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
 		const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
@@ -274,8 +274,8 @@ suite('Endpoint Discovery Suite', () => {
         const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
         mockFileSystemProvider.findFiles.resolves([mockUri]);
         const expectedEndpointsFromFile: EndpointInfo[] = [
-            { method: 'GET', path: '/api/items/{itemId}', uri: mockUri as any, position: createMockPosition(11, 4) as any, handlerMethodName: 'getItem' },
-            { method: 'PUT', path: '/api/items/{itemId}/details/{detailId}', uri: mockUri as any, position: createMockPosition(19, 4) as any, handlerMethodName: 'updateItemDetail' },
+            { method: 'GET', path: '/api/items/{itemId}', uri: mockUri as any, position: createMockPosition(11, 4) as any, handlerMethodName: 'getItem', startLine: 0, endLine: 0 },
+            { method: 'PUT', path: '/api/items/{itemId}/details/{detailId}', uri: mockUri as any, position: createMockPosition(19, 4) as any, handlerMethodName: 'updateItemDetail', startLine: 0, endLine: 0 },
         ];
         processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
         const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
@@ -311,9 +311,9 @@ suite('Endpoint Discovery Suite', () => {
         const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
         mockFileSystemProvider.findFiles.resolves([mockUri]);
         const expectedEndpointsFromFile: EndpointInfo[] = [
-            { method: 'GET', path: '/api/users', uri: mockUri as any, position: createMockPosition(9, 4) as any, handlerMethodName: 'getAllUsers' },
-            { method: 'POST', path: '/api/users', uri: mockUri as any, position: createMockPosition(12, 4) as any, handlerMethodName: 'createUser' },
-            { method: 'GET', path: '/api/products/{id}', uri: mockUri as any, position: createMockPosition(20, 4) as any, handlerMethodName: 'getProduct' },
+            { method: 'GET', path: '/api/users', uri: mockUri as any, position: createMockPosition(9, 4) as any, handlerMethodName: 'getAllUsers', startLine: 0, endLine: 0 },
+            { method: 'POST', path: '/api/users', uri: mockUri as any, position: createMockPosition(12, 4) as any, handlerMethodName: 'createUser', startLine: 0, endLine: 0 },
+            { method: 'GET', path: '/api/products/{id}', uri: mockUri as any, position: createMockPosition(20, 4) as any, handlerMethodName: 'getProduct', startLine: 0, endLine: 0 },
         ];
         processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
         const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
@@ -334,9 +334,9 @@ suite('Endpoint Discovery Suite', () => {
         const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
         mockFileSystemProvider.findFiles.resolves([mockUri]);
         const expectedEndpointsFromFile: EndpointInfo[] = [
-            { method: 'GET', path: '/api/complex/items', uri: mockUri as any, position: createMockPosition(16, 4) as any, handlerMethodName: 'getItemsOrArticles' },
-            { method: 'GET', path: '/api/complex/articles', uri: mockUri as any, position: createMockPosition(16, 4) as any, handlerMethodName: 'getItemsOrArticles' },
-            { method: 'GET', path: '/api/complex', uri: mockUri as any, position: createMockPosition(26, 4) as any, handlerMethodName: 'handlePostOrPut' },
+            { method: 'GET', path: '/api/complex/items', uri: mockUri as any, position: createMockPosition(16, 4) as any, handlerMethodName: 'getItemsOrArticles', startLine: 0, endLine: 0 },
+            { method: 'GET', path: '/api/complex/articles', uri: mockUri as any, position: createMockPosition(16, 4) as any, handlerMethodName: 'getItemsOrArticles', startLine: 0, endLine: 0 },
+            { method: 'GET', path: '/api/complex', uri: mockUri as any, position: createMockPosition(26, 4) as any, handlerMethodName: 'handlePostOrPut', startLine: 0, endLine: 0 },
         ];
         processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
         const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
@@ -372,6 +372,186 @@ suite('Endpoint Discovery Suite', () => {
 	suite('parseMappingAnnotations Suite', () => { /* ... existing tests ... */ });
 	suite('combinePaths Suite', () => { /* ... existing tests ... */ });
 	suite('getControllerDetailsFromClassAnnotationText Suite', () => { /* ... existing tests ... */ });
+
+    suite('discoverEndpoints - Comprehensive with Line Numbers', () => {
+        const todoStatusControllerContent = `
+package com.example.todoapp.controller;
+
+import com.example.todoapp.model.TodoStatus;
+import com.example.todoapp.service.TodoStatusService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/todo-statuses")
+public class TodoStatusController { // Line 12 (0-indexed)
+
+    private final TodoStatusService todoStatusService;
+
+    @Autowired
+    public TodoStatusController(TodoStatusService todoStatusService) {
+        this.todoStatusService = todoStatusService;
+    } // Line 19
+
+    @GetMapping // Line 21 (Annotation for getAllTodoStatuses)
+    public ResponseEntity<List<TodoStatus>> getAllTodoStatuses() { // Line 22 (Method Name)
+        return ResponseEntity.ok(todoStatusService.findAll());
+    } // Line 24 (Method End)
+
+    @GetMapping("/{id}") // Line 26 (Annotation for getTodoStatusById)
+    public ResponseEntity<TodoStatus> getTodoStatusById(@PathVariable Long id) { // Line 27 (Method Name)
+        return todoStatusService.findById(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    } // Line 31 (Method End)
+
+    @PostMapping // Line 33
+    public ResponseEntity<TodoStatus> createTodoStatus(@RequestBody TodoStatus todoStatus) { // Line 34
+        return ResponseEntity.ok(todoStatusService.save(todoStatus));
+    } // Line 36
+
+    @PutMapping("/{id}") // Line 38
+    public ResponseEntity<TodoStatus> updateTodoStatus(@PathVariable Long id, @RequestBody TodoStatus todoStatus) { // Line 39
+        if (!todoStatusService.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        todoStatus.setId(id);
+        return ResponseEntity.ok(todoStatusService.save(todoStatus));
+    } // Line 45
+
+    @DeleteMapping("/{id}") // Line 47
+    public ResponseEntity<Void> deleteTodoStatus(@PathVariable Long id) { // Line 48
+        if (!todoStatusService.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        todoStatusService.deleteById(id);
+        return ResponseEntity.ok().build();
+    } // Line 54
+} // Line 55 (Class End)
+        `.trim();
+
+        test('Should discover endpoints with correct start and end lines from TodoStatusController', async () => {
+            const mockFileUri = createMockUri('/com/example/todoapp/controller/TodoStatusController.java');
+            mockFileSystemProvider.findFiles.resolves([mockFileUri]);
+
+            const mockDocument = createFullMockTextDocument(mockFileUri, todoStatusControllerContent);
+            mockDocumentProvider.openTextDocument.withArgs(mockFileUri).resolves(mockDocument);
+
+            const mockTodoStatusControllerSymbols: MockDocumentSymbol[] = [
+                {
+                    name: 'TodoStatusController',
+                    detail: 'com.example.todoapp.controller.TodoStatusController',
+                    kind: MockSymbolKind.Class,
+                    range: createMockRange(12, 0, 55, 1), // Line 12 to 55 (class block)
+                    selectionRange: createMockRange(12, 13, 12, 33), // "TodoStatusController"
+                    children: [
+                        {
+                            name: 'TodoStatusController',
+                            detail: '(TodoStatusService)',
+                            kind: MockSymbolKind.Constructor,
+                            range: createMockRange(17, 4, 19, 5),
+                            selectionRange: createMockRange(17, 11, 17, 31),
+                            children: [],
+                        },
+                        {
+                            name: 'getAllTodoStatuses',
+                            detail: '()',
+                            kind: MockSymbolKind.Method,
+                            range: createMockRange(22, 4, 24, 5), // Method body: public to closing }
+                            selectionRange: createMockRange(22, 40, 22, 58), // "getAllTodoStatuses"
+                            children: [],
+                        },
+                        {
+                            name: 'getTodoStatusById',
+                            detail: '(Long)',
+                            kind: MockSymbolKind.Method,
+                            range: createMockRange(27, 4, 31, 5), // Method body
+                            selectionRange: createMockRange(27, 35, 27, 52), // "getTodoStatusById"
+                            children: [],
+                        },
+                        {
+                            name: 'createTodoStatus',
+                            detail: '(TodoStatus)',
+                            kind: MockSymbolKind.Method,
+                            range: createMockRange(34, 4, 36, 5),
+                            selectionRange: createMockRange(34, 35, 34, 51),
+                            children: [],
+                        },
+                        {
+                            name: 'updateTodoStatus',
+                            detail: '(Long, TodoStatus)',
+                            kind: MockSymbolKind.Method,
+                            range: createMockRange(39, 4, 45, 5),
+                            selectionRange: createMockRange(39, 35, 39, 51),
+                            children: [],
+                        },
+                        {
+                            name: 'deleteTodoStatus',
+                            detail: '(Long)',
+                            kind: MockSymbolKind.Method,
+                            range: createMockRange(48, 4, 54, 5),
+                            selectionRange: createMockRange(48, 33, 48, 49),
+                            children: [],
+                        },
+                    ],
+                }
+            ];
+            mockSymbolProvider.executeDocumentSymbolProvider.withArgs(mockFileUri).resolves(mockTodoStatusControllerSymbols);
+
+            const mockToken = { isCancellationRequested: false, onCancellationRequested: sandbox.stub() } as any;
+            const endpoints = await discoverEndpoints(
+                mockToken,
+                mockDocumentProvider,
+                mockSymbolProvider,
+                mockFileSystemProvider
+            );
+
+            assert.strictEqual(endpoints.length, 5, 'Should find 5 endpoints');
+
+            const getAll = endpoints.find(ep => ep.handlerMethodName === 'getAllTodoStatuses');
+            assert.ok(getAll, 'getAllTodoStatuses endpoint not found');
+            assert.strictEqual(getAll.method, 'GET');
+            assert.strictEqual(getAll.path, '/api/todo-statuses');
+            assert.strictEqual(getAll.position.line, 22, 'getAllTodoStatuses position.line');
+            assert.strictEqual(getAll.startLine, 21, 'getAllTodoStatuses startLine (annotation)');
+            assert.strictEqual(getAll.endLine, 24, 'getAllTodoStatuses endLine (method body end)');
+
+            const getById = endpoints.find(ep => ep.handlerMethodName === 'getTodoStatusById');
+            assert.ok(getById, 'getTodoStatusById endpoint not found');
+            assert.strictEqual(getById.method, 'GET');
+            assert.strictEqual(getById.path, '/api/todo-statuses/{id}');
+            assert.strictEqual(getById.position.line, 27, 'getTodoStatusById position.line');
+            assert.strictEqual(getById.startLine, 26, 'getTodoStatusById startLine (annotation)');
+            assert.strictEqual(getById.endLine, 31, 'getTodoStatusById endLine (method body end)');
+
+            const create = endpoints.find(ep => ep.handlerMethodName === 'createTodoStatus');
+            assert.ok(create, 'createTodoStatus endpoint not found');
+            assert.strictEqual(create.method, 'POST');
+            assert.strictEqual(create.path, '/api/todo-statuses');
+            assert.strictEqual(create.position.line, 34, 'createTodoStatus position.line');
+            assert.strictEqual(create.startLine, 33, 'createTodoStatus startLine (annotation)');
+            assert.strictEqual(create.endLine, 36, 'createTodoStatus endLine (method body end)');
+
+            const update = endpoints.find(ep => ep.handlerMethodName === 'updateTodoStatus');
+            assert.ok(update, 'updateTodoStatus endpoint not found');
+            assert.strictEqual(update.method, 'PUT');
+            assert.strictEqual(update.path, '/api/todo-statuses/{id}');
+            assert.strictEqual(update.position.line, 39, 'updateTodoStatus position.line');
+            assert.strictEqual(update.startLine, 38, 'updateTodoStatus startLine (annotation)');
+            assert.strictEqual(update.endLine, 45, 'updateTodoStatus endLine (method body end)');
+
+            const del = endpoints.find(ep => ep.handlerMethodName === 'deleteTodoStatus');
+            assert.ok(del, 'deleteTodoStatus endpoint not found');
+            assert.strictEqual(del.method, 'DELETE');
+            assert.strictEqual(del.path, '/api/todo-statuses/{id}');
+            assert.strictEqual(del.position.line, 48, 'deleteTodoStatus position.line');
+            assert.strictEqual(del.startLine, 47, 'deleteTodoStatus startLine (annotation)');
+            assert.strictEqual(del.endLine, 54, 'deleteTodoStatus endLine (method body end)');
+        });
+    });
 
 });
 

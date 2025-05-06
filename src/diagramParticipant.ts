@@ -359,15 +359,13 @@ async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQ
 
         // Report discovered endpoints immediately
         if (allEndpoints && allEndpoints.length > 0) {
-            // Build the full markdown string first
-            let endpointListMarkdown = `I found ${allEndpoints.length} REST endpoints:\n`;
-            for (const endpoint of allEndpoints) {
-                // Use path.basename to get just the filename
-                const filename = path.basename(endpoint.uri.fsPath);
-                endpointListMarkdown += `- \`${endpoint.method} ${endpoint.path}\` in \`${filename}\`\n`; // Add newline here
+            let message = `I found ${allEndpoints.length} REST endpoints:\n\n`;
+            for (const ep of allEndpoints) {
+                const fileName = path.basename(ep.uri.fsPath);
+                // Format with 1-based line numbers for display
+                message += `- ${ep.method} ${ep.path} in ${fileName} (lines ${ep.startLine + 1}-${ep.endLine + 1})\n`;
             }
-            // Send the complete list as a single markdown message
-            stream.markdown(endpointListMarkdown);
+            stream.markdown(message);
         }
         // Keep the original "no endpoints" check later for cases where discovery succeeds but finds nothing
 

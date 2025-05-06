@@ -8,9 +8,11 @@ export interface EndpointInfo {
     method: string; // e.g., 'GET', 'POST'
     path: string; // e.g., '/api/users', '/api/users/{id}'
     uri: vscode.Uri; // File URI
-    position: vscode.Position; // Position of the method definition
+    position: vscode.Position; // Position of the method *name* (for navigation, LSP interactions)
     handlerMethodName: string; // Name of the Java method handling the endpoint
     description?: string; // Optional description from Javadoc/comments
+    startLine: number; // 0-indexed, actual start line of the mapping annotation
+    endLine: number;   // 0-indexed, end of method body (`methodSymbol.range.end.line`)
 }
 
 /**
@@ -19,6 +21,8 @@ export interface EndpointInfo {
 interface ParsedAnnotationInfo {
     httpMethod: string | null;
     paths: string[];
+    annotationStartIndex?: number; // Index of the matched annotation string within the input text block
+    annotationFullText?: string;   // The actual matched annotation text e.g. @GetMapping("/path")
 }
 
 /**
@@ -64,27 +68,34 @@ export function parseMappingAnnotations(text: string): ParsedAnnotationInfo | nu
     // console.log(`[parseMappingAnnotations] Last match: ${fullAnnotationName}, Attrs: "${attributesString}"`);
 
     // Parse the attributes of the last found annotation
-    let result = parseAttributes(attributesString, fullAnnotationName);
+    let resultAttributes = parseAttributes(attributesString, fullAnnotationName);
+
+    let finalHttpMethod = resultAttributes.httpMethod;
 
     // Apply default GET method for RequestMapping *only if* no method was specified in its attributes
-    if (fullAnnotationName === 'RequestMapping' && !result.httpMethod) {
+    if (fullAnnotationName === 'RequestMapping' && !finalHttpMethod) {
         // console.log(`[parseMappingAnnotations] Applying default GET for RequestMapping`);
-        result.httpMethod = 'GET';
+        finalHttpMethod = 'GET';
     }
 
     // Ensure we always have a method if a specific mapping annotation was found
-    if (!result.httpMethod) {
+    if (!finalHttpMethod) {
          // This case should primarily happen only if parseAttributes failed unexpectedly for a specific mapping type
         console.warn(`[parseMappingAnnotations] Could not determine HTTP method for annotation ${fullAnnotationName} with attributes "${attributesString}". Attempting fallback based on type.`);
-        result.httpMethod = getHttpMethodFromAnnotationName(fullAnnotationName); // Fallback based on annotation type
-        if (!result.httpMethod) {
+        finalHttpMethod = getHttpMethodFromAnnotationName(fullAnnotationName); // Fallback based on annotation type
+        if (!finalHttpMethod) {
              console.error(`[parseMappingAnnotations] CRITICAL: Failed to determine HTTP method for ${fullAnnotationName}. Defaulting to GET.`);
-             result.httpMethod = 'GET'; // Final safety net
+             finalHttpMethod = 'GET'; // Final safety net
         }
     }
 
     // console.log(`[parseMappingAnnotations] Text: "${text.substring(0, 50)}..." => Result:`, result);
-    return result;
+    return {
+        httpMethod: finalHttpMethod,
+        paths: resultAttributes.paths,
+        annotationStartIndex: lastMatch.index,
+        annotationFullText: lastMatch[0]
+    };
 }
 
 /**
@@ -382,22 +393,39 @@ export async function findControllerClasses(document: vscode.TextDocument, symbo
  * Interface for parameters passed to the pure method processing helper.
  */
 interface MethodProcessingParams {
-    methodAnnotationText: string;
+    methodAnnotationText: string; // The block of text potentially containing annotations
     basePath: string;
     methodName: string;
-    methodStartLine: number;
-    methodStartChar: number;
+    methodNameStartLine: number;     // 0-indexed, start line of the method name (from symbol's selectionRange)
+    methodNameStartChar: number;     // Character offset for method name
+    annotationBlockStartLine: number; // 0-indexed, the global start line of methodAnnotationText
 }
 
 /**
  * Interface for the simplified endpoint data returned by the pure helper.
+ * This is before combining with methodSymbolData.range.end.line
  */
-interface ProcessedMethodEndpoint {
+interface ProcessedAnnotationDetails { // New name
+    httpMethod: string; // From parsed annotation
+    paths: string[];    // From parsed annotation (can be multiple)
+    handlerMethodName: string; // From original method symbol name
+    methodNameLine: number;     // From original method symbol's selectionRange.start.line
+    methodNameChar: number;     // From original method symbol's selectionRange.start.character
+    actualAnnotationGlobalStartLine: number; // Calculated global start line of the annotation
+}
+
+/**
+ * Internal structure used by `internalFindEndpointsInClassLogic` before creating final `EndpointInfo`.
+ * This structure combines details from `ProcessedAnnotationDetails` with the method's body end line.
+ */
+interface ExtendedProcessedMethodEndpoint { // Existing, but to be populated from ProcessedAnnotationDetails + methodBodyEndLine
     method: string;
-    path: string;
+    path: string; // Fully combined path
     handlerMethodName: string;
-    positionLine: number;
-    positionChar: number;
+    methodNameLine: number;
+    methodNameChar: number;
+    actualAnnotationGlobalStartLine: number;
+    methodBodyEndLine: number; // From methodSymbolData.range.end.line
 }
 
 /**
@@ -405,23 +433,29 @@ interface ProcessedMethodEndpoint {
  */
 export function processMethodAnnotationsAndCreateEndpoints(
     params: MethodProcessingParams
-): ProcessedMethodEndpoint[] {
-    const endpoints: ProcessedMethodEndpoint[] = [];
+): ProcessedAnnotationDetails[] {
+    const processedDetailsList: ProcessedAnnotationDetails[] = [];
     const methodMappingInfo = parseMappingAnnotations(params.methodAnnotationText);
 
     if (methodMappingInfo && methodMappingInfo.httpMethod && methodMappingInfo.paths.length > 0) {
-        for (const methodPath of methodMappingInfo.paths) {
-            const fullPath = combinePaths(params.basePath, methodPath); // combinePaths is pure
-            endpoints.push({
-                method: methodMappingInfo.httpMethod,
-                path: fullPath,
-                handlerMethodName: params.methodName,
-                positionLine: params.methodStartLine,
-                positionChar: params.methodStartChar,
-            });
+        let actualAnnotationGlobalStartLine = params.annotationBlockStartLine; // Default if no index
+        if (methodMappingInfo.annotationStartIndex !== undefined) {
+            const textBeforeAnnotation = params.methodAnnotationText.substring(0, methodMappingInfo.annotationStartIndex!);
+            const newlinesBeforeAnnotation = (textBeforeAnnotation.match(/\n/g) || []).length;
+            actualAnnotationGlobalStartLine = params.annotationBlockStartLine + newlinesBeforeAnnotation;
         }
+
+        // No path combination here yet. Paths are directly from the annotation.
+        processedDetailsList.push({
+            httpMethod: methodMappingInfo.httpMethod,
+            paths: methodMappingInfo.paths, // These are the raw paths from the annotation
+            handlerMethodName: params.methodName,
+            methodNameLine: params.methodNameStartLine,
+            methodNameChar: params.methodNameStartChar,
+            actualAnnotationGlobalStartLine: actualAnnotationGlobalStartLine,
+        });
     }
-    return endpoints;
+    return processedDetailsList;
 }
 
 /**
@@ -432,8 +466,8 @@ function internalFindEndpointsInClassLogic(
     simpleClassSymbol: SimpleDocumentSymbolData,
     basePath: string,
     token: vscode.CancellationToken // Keep token for potential cancellation checks in future
-): ProcessedMethodEndpoint[] {
-    const allClassEndpoints: ProcessedMethodEndpoint[] = [];
+): ExtendedProcessedMethodEndpoint[] {
+    const allClassEndpoints: ExtendedProcessedMethodEndpoint[] = [];
     const potentialMethods = simpleClassSymbol.children.filter(symbol => symbol.kind === 5 /* Method */);
 
     // Sort methods by start line (using simple data)
@@ -468,13 +502,28 @@ function internalFindEndpointsInClassLogic(
             methodAnnotationText,
             basePath,
             methodName: methodSymbolData.name,
-            methodStartLine: methodSelectionStart.line,
-            methodStartChar: methodSelectionStart.character,
+            methodNameStartLine: methodSelectionStart.line,
+            methodNameStartChar: methodSelectionStart.character,
+            annotationBlockStartLine: annotationStartLine,
         };
 
         // processMethodAnnotationsAndCreateEndpoints is already pure and tested
-        const processedEndpoints = processMethodAnnotationsAndCreateEndpoints(processingParams);
-        allClassEndpoints.push(...processedEndpoints);
+        const processedAnnotationDetailList = processMethodAnnotationsAndCreateEndpoints(processingParams);
+
+        for (const annDetail of processedAnnotationDetailList) {
+            for (const methodPath of annDetail.paths) { // Iterate through raw paths from the annotation
+                const fullPath = combinePaths(basePath, methodPath); // Combine with class base path
+                allClassEndpoints.push({
+                    method: annDetail.httpMethod,
+                    path: fullPath, // Use the combined path
+                    handlerMethodName: annDetail.handlerMethodName,
+                    methodNameLine: annDetail.methodNameLine,
+                    methodNameChar: annDetail.methodNameChar,
+                    actualAnnotationGlobalStartLine: annDetail.actualAnnotationGlobalStartLine,
+                    methodBodyEndLine: methodSymbolData.range.end.line, // From the current method's symbol
+                });
+            }
+        }
     }
     return allClassEndpoints;
 }
@@ -520,15 +569,17 @@ export async function findEndpointsInClass(
     const simpleClassSymbol = convertSingleSymbol(classSymbol);
 
     // 2. Call the internal logic function
-    const internalResult = internalFindEndpointsInClassLogic(simpleDoc, simpleClassSymbol, basePath, token);
+    const internalResult: ExtendedProcessedMethodEndpoint[] = internalFindEndpointsInClassLogic(simpleDoc, simpleClassSymbol, basePath, token);
 
     // 3. Convert result back to EndpointInfo[] (requires vscode.Uri and vscode.Position)
-    const finalEndpoints: EndpointInfo[] = internalResult.map(procEp => ({
-        method: procEp.method,
-        path: procEp.path,
+    const finalEndpoints: EndpointInfo[] = internalResult.map(extProcEp => ({
+        method: extProcEp.method,
+        path: extProcEp.path,
         uri: document.uri, // Use original vscode.Uri
-        position: new vscode.Position(procEp.positionLine, procEp.positionChar), // Create vscode.Position
-        handlerMethodName: procEp.handlerMethodName,
+        position: new vscode.Position(extProcEp.methodNameLine, extProcEp.methodNameChar), // Create vscode.Position for method name
+        handlerMethodName: extProcEp.handlerMethodName,
+        startLine: extProcEp.actualAnnotationGlobalStartLine, // NEW field
+        endLine: extProcEp.methodBodyEndLine,   // NEW field
     }));
 
     return finalEndpoints;

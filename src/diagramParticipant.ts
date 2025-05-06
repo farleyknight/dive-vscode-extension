@@ -5,8 +5,12 @@ import { TextDecoder } from 'util'; // Import TextDecoder for Uint8Array convers
 import { getMermaidWebviewHtml } from './views/mermaid-webview-template'; // Added import
 import { JSDOM } from 'jsdom';
 import createDOMPurify from 'dompurify';
-import { discoverEndpoints, disambiguateEndpoint } from './endpoint-discovery'; // Added import
-// Removed incorrect imports for utils and RenderDiagramTool
+import { EndpointInfo, discoverEndpoints } from './endpoint-discovery'; // Corrected: discoverEndpoints and EndpointInfo from here
+import { disambiguateEndpoint } from './endpoint-disambiguation'; // Corrected: disambiguateEndpoint from here
+// Removed import for MermaidService as it's unused.
+// Removed import for TelemetryService and related types as they are unused.
+// Removed import for Logger as vscode.TelemetryLogger is used.
+// Removed import for DiveLanguageModel and LanguageModelService as they are unused.
 
 // Define constants locally
 const DIAGRAM_NAMES_COMMAND_ID = 'diagram.namesInEditor';

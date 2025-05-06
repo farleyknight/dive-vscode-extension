@@ -11,8 +11,10 @@ The primary focus has shifted to implementing the **Call Hierarchy** feature for
     *   **(Completed)** Integrate the existing `buildCallHierarchyTree` function (from `src/call-hierarchy.ts`) into the `/restEndpoint` command handler.
     *   Implement logic to translate the `CustomHierarchyNode` tree structure (from `buildCallHierarchyTree`) into a Mermaid sequence diagram format.
     *   Display the generated Mermaid diagram to the user within the webview (likely using the existing `createAndShowDiagramWebview` mechanism).
+    *   **Manual Testing & Observation:** Run the `/restEndpoint` command with a Java Spring Boot project to observe the generated sequence diagram. Note issues with participant names, call flow, and overall clarity.
+    *   **Refinement (based on testing):** Refine `getParticipantName`, consider adding `activate`/`deactivate` logic, and address any issues in `sanitizeParticipantName` or `escapeMermaidMessage` in `src/mermaid-sequence-translator.ts`.
     *   Add dedicated unit tests for `src/call-hierarchy.ts` (mocking `vscode.commands.executeCommand`).
-    *   Add unit tests for the Mermaid diagram translation logic.
+    *   Add unit tests for the Mermaid diagram translation logic (`src/mermaid-sequence-translator.ts`).
 *   **Detailed Status & Plan:** See `docs/rest_endpoint_feature.md` (this document is also being updated to reflect the current priorities and progress).
 
 ## Guiding Principles

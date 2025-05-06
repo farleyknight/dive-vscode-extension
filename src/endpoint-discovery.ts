@@ -256,7 +256,7 @@ export function combinePaths(basePath: string, methodPath: string): string {
 /**
  * Represents a potential controller class found via symbols.
  */
-interface PotentialController {
+export interface PotentialController {
     classSymbol: vscode.DocumentSymbol;
     basePath: string; // Base path from class-level @RequestMapping, defaults to '/'
     isRestController: boolean; // True if @RestController or @Controller found
@@ -596,7 +596,9 @@ export async function discoverEndpoints(
     token: vscode.CancellationToken,
     documentProvider?: VscodeDocumentProvider,
     symbolProvider?: VscodeSymbolProvider,
-    fileSystemProvider?: VscodeFileSystemProvider // New parameter
+    fileSystemProvider?: VscodeFileSystemProvider,
+    // New parameter for injecting the processor function for testing
+    processFunc?: (uri: vscode.Uri, token: vscode.CancellationToken, docProvider: VscodeDocumentProvider, symProvider: VscodeSymbolProvider) => Promise<EndpointInfo[]>
 ): Promise<EndpointInfo[]> {
     let allEndpoints: EndpointInfo[] = [];
 
@@ -629,13 +631,16 @@ export async function discoverEndpoints(
 
     console.log(`[discoverEndpoints] Found ${javaFiles.length} Java files.`);
 
+    // Determine the actual processor function to use
+    const actualProcessJavaFileForEndpoints = processFunc || processJavaFileForEndpoints; // Default to the actual function
+
     for (const uri of javaFiles) {
         if (token.isCancellationRequested) {
             console.log('[discoverEndpoints] Cancellation requested.');
             break;
         }
-        // Pass the providers to processJavaFileForEndpoints
-        const fileEndpoints = await processJavaFileForEndpoints(uri, token, actualDocumentProvider, actualSymbolProvider);
+        // Pass the providers to the determined processor function
+        const fileEndpoints = await actualProcessJavaFileForEndpoints(uri, token, actualDocumentProvider, actualSymbolProvider);
         allEndpoints = allEndpoints.concat(fileEndpoints);
     }
 

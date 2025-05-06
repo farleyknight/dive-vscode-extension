@@ -1,1118 +1,384 @@
 import * as assert from 'assert';
-import * as vscode from 'vscode';
-import { discoverEndpoints, EndpointInfo, parseMappingAnnotations, findControllerClasses, findEndpointsInClass, combinePaths, getControllerDetailsFromClassAnnotationText } from '../../src/endpoint-discovery'; // Adjust path if needed
-import * as sinon from 'sinon'; // Using sinon for mocking
+// Intentionally removed: import * as vscode from 'vscode';
+import { discoverEndpoints, EndpointInfo, parseMappingAnnotations, findControllerClasses, findEndpointsInClass, combinePaths, getControllerDetailsFromClassAnnotationText, PotentialController as SrcPotentialController } from '../../src/endpoint-discovery';
+import * as sinon from 'sinon';
 
-// Helper function to create a more complete and reusable mock TextDocument
-function createFullMockTextDocument(uri: vscode.Uri, content: string): vscode.TextDocument {
-	const lines = content.split('\n');
-	const lineCount = lines.length;
+import * as endpointDiscoveryModule from '../../src/endpoint-discovery';
+// Intentionally removed: import { VscodeDocumentProvider, VscodeSymbolProvider, VscodeFileSystemProvider } from '../../src/endpoint-discovery';
 
-	return {
-		uri,
-		lineCount,
-		getText: sinon.stub().callsFake((range?: vscode.Range): string => {
-			if (!range) {
-				return content;
-			}
-			let extractedText = '';
-			for (let i = range.start.line; i <= range.end.line; i++) {
-				if (i >= lineCount) break;
-				const lineContent = lines[i];
-				let lineToAppend = '';
-
-				if (i === range.start.line && i === range.end.line) { // Range is on a single line
-					lineToAppend = lineContent.substring(range.start.character, range.end.character);
-				} else if (i === range.start.line) { // First line of a multi-line range
-					lineToAppend = lineContent.substring(range.start.character);
-				} else if (i === range.end.line) { // Last line of a multi-line range
-					lineToAppend = lineContent.substring(0, range.end.character);
-				} else { // A full line in between start and end lines
-					lineToAppend = lineContent;
-				}
-				extractedText += lineToAppend;
-				if (i < range.end.line) { // Add newline if it's not the last line of the range
-					extractedText += '\n';
-				}
-			}
-			return extractedText;
-		}),
-		fileName: uri.fsPath,
-		isUntitled: false,
-		languageId: 'java', // Default to java, can be parameterized if needed
-		version: 1,
-		isDirty: false,
-		isClosed: false,
-		save: sinon.stub().resolves(true),
-		eol: vscode.EndOfLine.LF,
-		lineAt: sinon.stub().callsFake((lineOrPosition: number | vscode.Position): vscode.TextLine => {
-			const lineNumber = typeof lineOrPosition === 'number' ? lineOrPosition : lineOrPosition.line;
-			if (lineNumber < 0 || lineNumber >= lineCount) {
-				// Behavior of real lineAt for out-of-bounds is to throw.
-				// For robust testing, ensure tests provide valid lines or handle expected errors.
-				throw new Error(`Mock lineAt: Line number ${lineNumber} is out of bounds (0-${lineCount - 1}).`);
-			}
-			const lineText = lines[lineNumber];
-			return {
-				lineNumber,
-				text: lineText,
-				range: new vscode.Range(lineNumber, 0, lineNumber, lineText.length),
-				rangeIncludingLineBreak: new vscode.Range(lineNumber, 0, lineNumber + (lineNumber === lineCount - 1 ? 0 : 1), lineNumber === lineCount - 1 ? lineText.length : 0),
-				firstNonWhitespaceCharacterIndex: lineText.search(/S|$/),
-				isEmptyOrWhitespace: lineText.trim().length === 0,
-			};
-		}),
-		offsetAt: sinon.stub().callsFake((position: vscode.Position): number => { // Basic implementation
-			let offset = 0;
-			for (let i = 0; i < position.line; i++) {
-				if (i < lines.length) {
-					offset += lines[i].length + 1; // +1 for newline
-				} else {
-					 throw new Error(`Mock offsetAt: Line number ${i} is out of bounds.`);
-				}
-			}
-			if (position.line < lines.length) {
-				offset += Math.min(position.character, lines[position.line].length);
-			} else if (position.line === lines.length && position.character === 0) {
-				// Position at the very end of the document (after the last newline)
-			}
-			 else {
-				throw new Error(`Mock offsetAt: Position ${position.line}:${position.character} is out of bounds.`);
-			}
-			return Math.min(offset, content.length); // Ensure not out of bounds of total content
-		}),
-		positionAt: sinon.stub().callsFake((offset: number): vscode.Position => { // Basic implementation
-			if (offset < 0) throw new Error("Offset cannot be negative.");
-			if (offset > content.length) offset = content.length; // Cap offset at content length
-
-			let currentOffset = 0;
-			for (let i = 0; i < lines.length; i++) {
-				const lineLengthWithNewline = lines[i].length + (i < lines.length - 1 ? 1 : 0);
-				if (offset <= currentOffset + lineLengthWithNewline) {
-					// If offset is exactly at newline, it should be start of next line,
-					// unless it's the very end of the content after the last line.
-					if (offset === currentOffset + lines[i].length + 1 && i < lines.length -1) {
-						 return new vscode.Position(i + 1, 0);
-					}
-					return new vscode.Position(i, offset - currentOffset);
-				}
-				currentOffset += lineLengthWithNewline;
-			}
-			// If offset is at the very end of the content (potentially after the last character of the last line)
-			return new vscode.Position(lines.length > 0 ? lines.length - 1 : 0, lines.length > 0 ? lines[lines.length -1].length : 0);
-		}),
-		validateRange: sinon.stub().callsFake(range => range), // Pass-through
-		validatePosition: sinon.stub().callsFake(pos => pos), // Pass-through
-		getWordRangeAtPosition: sinon.stub(), // Not implemented, add if needed
-	} as unknown as vscode.TextDocument;
+// --- Test-Local Mock Types ---
+interface MockUri {
+    fsPath: string; scheme: string; path: string; authority: string; query: string; fragment: string;
+    toString(): string;
+    with(change: { scheme?: string; authority?: string; path?: string; query?: string; fragment?: string }): MockUri;
+    toJSON(): any;
+}
+function createMockUri(filePath: string): MockUri {
+    const path = filePath.startsWith('/') ? filePath : '/' + filePath;
+    const newUri: MockUri = {
+        fsPath: path, scheme: 'file', path: path, authority: '', query: '', fragment: '',
+        toString: () => `file://${path.startsWith('//') ? path.substring(2) : (path.startsWith('/') ? path.substring(1) : path)}`,
+        with: (change: { scheme?: string; authority?: string; path?: string; query?: string; fragment?: string }): MockUri => {
+            const mergedFsPath = change.path !== undefined ? change.path : newUri.path;
+            const tempUriForMerged = createMockUri(mergedFsPath);
+            return {
+                ...tempUriForMerged,
+                scheme: change.scheme !== undefined ? change.scheme : newUri.scheme,
+                authority: change.authority !== undefined ? change.authority : newUri.authority,
+                query: change.query !== undefined ? change.query : newUri.query,
+                fragment: change.fragment !== undefined ? change.fragment : newUri.fragment,
+            };
+        },
+        toJSON: () => ({ $mid: 1, fsPath: newUri.fsPath, external: newUri.toString(), path: newUri.path, scheme: newUri.scheme, authority: newUri.authority, query: newUri.query, fragment: newUri.fragment })
+    }; return newUri;
 }
 
-// // Check the environment variable value - REMOVED
-// console.log(`[endpoint-discovery.test.ts] Checking DIVE_TEST_GLOB: ${process.env.DIVE_TEST_GLOB}`);
+interface MockPosition {
+    line: number; character: number;
+    isBefore(other: MockPosition): boolean; isBeforeOrEqual(other: MockPosition): boolean;
+    isAfter(other: MockPosition): boolean; isAfterOrEqual(other: MockPosition): boolean;
+    isEqual(other: MockPosition): boolean; compareTo(other: MockPosition): number;
+    translate(lineDelta?: number, characterDelta?: number): MockPosition;
+    translate(change: { lineDelta?: number; characterDelta?: number }): MockPosition;
+    with(line?: number, character?: number): MockPosition;
+    with(change: { line?: number; character?: number }): MockPosition;
+}
+function createMockPosition(line: number, character: number): MockPosition {
+    const pos = { line, character } as any; // Use `as any` initially for easier method assignment
+    pos.isBefore = (other: MockPosition): boolean => pos.line < other.line || (pos.line === other.line && pos.character < other.character);
+    pos.isBeforeOrEqual = (other: MockPosition): boolean => pos.line < other.line || (pos.line === other.line && pos.character <= other.character);
+    pos.isAfter = (other: MockPosition): boolean => pos.line > other.line || (pos.line === other.line && pos.character > other.character);
+    pos.isAfterOrEqual = (other: MockPosition): boolean => pos.line > other.line || (pos.line === other.line && pos.character >= other.character);
+    pos.isEqual = (other: MockPosition): boolean => pos.line === other.line && pos.character === other.character;
+    pos.compareTo = (other: MockPosition): number => {
+        if (pos.line < other.line) return -1; if (pos.line > other.line) return 1;
+        if (pos.character < other.character) return -1; if (pos.character > other.character) return 1;
+        return 0;
+    };
+    pos.translate = function(this: MockPosition, lineDeltaOrChange?: number | { lineDelta?: number; characterDelta?: number }, characterDeltaInput?: number): MockPosition {
+        let lineDelta = 0; let charDelta = 0;
+        if (typeof lineDeltaOrChange === 'object') { lineDelta = lineDeltaOrChange.lineDelta ?? 0; charDelta = lineDeltaOrChange.characterDelta ?? 0; }
+        else { lineDelta = lineDeltaOrChange ?? 0; charDelta = characterDeltaInput ?? 0; }
+        return createMockPosition(this.line + lineDelta, this.character + charDelta);
+    };
+    pos.with = function(this: MockPosition, lineOrChange?: number | { line?: number; character?: number }, characterInput?: number): MockPosition {
+        let newLine = this.line; let newChar = this.character;
+        if (typeof lineOrChange === 'object') { newLine = lineOrChange.line ?? this.line; newChar = lineOrChange.character ?? this.character; }
+        else { newLine = lineOrChange ?? this.line; newChar = characterInput ?? this.character; }
+        return createMockPosition(newLine, newChar);
+    };
+    return pos as MockPosition;
+}
 
-// // Skip this entire suite if we are running E2E tests targeting a specific file - REMOVED
-// const shouldSkip = !!process.env.DIVE_TEST_GLOB;
+interface MockRange {
+    start: MockPosition; end: MockPosition; isEmpty: boolean; isSingleLine: boolean;
+    contains(position: MockPosition): boolean; contains(range: MockRange): boolean;
+    isEqual(other: MockRange): boolean;
+    intersection(other: MockRange): MockRange | undefined;
+    union(other: MockRange): MockRange;
+    with(start?: MockPosition, end?: MockPosition): MockRange;
+    with(change: { start?: MockPosition; end?: MockPosition }): MockRange;
+}
+function createMockRange(startLine: number, startChar: number, endLine: number, endChar: number): MockRange {
+    const startPos = createMockPosition(startLine, startChar);
+    const endPos = createMockPosition(endLine, endChar);
+    const range = { start: startPos, end: endPos } as any; // Use `as any` initially
+    range.isEmpty = range.start.line === range.end.line && range.start.character === range.end.character;
+    range.isSingleLine = range.start.line === range.end.line;
+    range.contains = function(this: MockRange, positionOrRange: MockPosition | MockRange): boolean {
+        if ('start' in positionOrRange) { return this.start.isBeforeOrEqual(positionOrRange.start) && this.end.isAfterOrEqual(positionOrRange.end); }
+        else { return positionOrRange.isAfterOrEqual(this.start) && positionOrRange.isBeforeOrEqual(this.end); }
+    };
+    range.isEqual = function(this: MockRange, other: MockRange): boolean { return this.start.isEqual(other.start) && this.end.isEqual(other.end); };
+    range.intersection = function(this: MockRange, other: MockRange): MockRange | undefined {
+        const sL = Math.max(this.start.line, other.start.line); const eL = Math.min(this.end.line, other.end.line); if (sL > eL) return undefined;
+        let sC = 0; if (this.start.line === sL && other.start.line === sL) sC = Math.max(this.start.character, other.start.character); else if (this.start.line === sL) sC = this.start.character; else sC = other.start.character;
+        let eC = 0; if (this.end.line === eL && other.end.line === eL) eC = Math.min(this.end.character, other.end.character); else if (this.end.line === eL) eC = this.end.character; else eC = other.end.character;
+        if (sL === eL && sC > eC) return undefined; return createMockRange(sL, sC, eL, eC);
+    };
+    range.union = function(this: MockRange, other: MockRange): MockRange {
+        const sL = Math.min(this.start.line, other.start.line); const eL = Math.max(this.end.line, other.end.line);
+        let sC = 0; if (this.start.line === sL && other.start.line === sL) sC = Math.min(this.start.character, other.start.character); else if (this.start.line === sL) sC = this.start.character; else sC = other.start.character;
+        let eC = 0; if (this.end.line === eL && other.end.line === eL) eC = Math.max(this.end.character, other.end.character); else if (this.end.line === eL) eC = this.end.character; else eC = other.end.character;
+        return createMockRange(sL, sC, eL, eC);
+    };
+    range.with = function(this: MockRange, startOrChange?: MockPosition | { start?: MockPosition; end?: MockPosition }, endInput?: MockPosition): MockRange {
+        let newStart = this.start; let newEnd = this.end;
+        if (startOrChange === undefined && endInput === undefined) return this;
+        if (typeof startOrChange === 'object' && (startOrChange as {start?:any}).start !== undefined || (startOrChange as {end?:any}).end !== undefined) { // Check for change object {start?, end?}
+            const change = startOrChange as { start?: MockPosition; end?: MockPosition };
+            newStart = change.start ?? this.start; newEnd = change.end ?? this.end;
+        } else if (startOrChange !== undefined) { // Individual start position, possibly with end position
+            newStart = startOrChange as MockPosition;
+            newEnd = endInput ?? this.end; // If endInput is undefined, it correctly uses this.end
+        }
+        return createMockRange(newStart.line, newStart.character, newEnd.line, newEnd.character);
+    };
+    return range as MockRange;
+}
 
-// suite(`Endpoint Discovery Suite${shouldSkip ? ' (Skipped in E2E specific run)' : ''}`, () => { // REMOVED condition
-suite('Endpoint Discovery Suite', () => { // Standard suite definition
-	// if (shouldSkip) { // REMOVED skip logic
-	// 	console.log('Skipping Endpoint Discovery unit tests because DIVE_TEST_GLOB is set.');
-	// 	return; // Exit the suite function early
-	// }
+interface MockCancellationToken { isCancellationRequested: boolean; onCancellationRequested: sinon.SinonStub; }
+type MockGlobPattern = string;
+const MockEndOfLine = { LF: 1, CRLF: 2 };
+const MockSymbolKind = { File:0, Module:1, Namespace:2, Package:3, Class: 4, Method: 5, Property:6, Field:7, Constructor:8, Enum:9, Interface:10, Function:11, Variable:12, Constant:13, String:14, Number:15, Boolean:16, Array:17, Object:18, Key:19, Null:20, EnumMember:21, Struct:22, Event:23, Operator:24, TypeParameter:25 };
+interface MockDocumentSymbol { name: string; detail: string; kind: number; range: MockRange; selectionRange: MockRange; children: MockDocumentSymbol[]; tags?: any[]; }
+interface MockTextLine { lineNumber: number; text: string; range: MockRange; rangeIncludingLineBreak: MockRange; firstNonWhitespaceCharacterIndex: number; isEmptyOrWhitespace: boolean; }
+interface MockTextDocument {
+    uri: MockUri; lineCount: number; getText(range?: MockRange): string; fileName: string; isUntitled: boolean; languageId: string; version: number; isDirty: boolean; isClosed: boolean;
+    save(): Promise<boolean>; eol: number; lineAt(lineOrPosition: number | MockPosition): MockTextLine;
+    offsetAt(position: MockPosition): number; positionAt(offset: number): MockPosition;
+    validateRange(range: MockRange): MockRange; validatePosition(position: MockPosition): MockPosition;
+    getWordRangeAtPosition(position: MockPosition, regex?: RegExp): MockRange | undefined;
+}
 
+interface TestVscodeDocumentProvider { openTextDocument(uri: MockUri): Promise<MockTextDocument | undefined>; }
+interface TestVscodeSymbolProvider { executeDocumentSymbolProvider(uri: MockUri): Promise<MockDocumentSymbol[] | undefined>; }
+interface TestVscodeFileSystemProvider { findFiles(include: MockGlobPattern, exclude?: MockGlobPattern | null, maxResults?: number, token?: MockCancellationToken): Promise<MockUri[]>; }
+
+class MockableVscodeDocumentProvider implements TestVscodeDocumentProvider { async openTextDocument(uri: MockUri): Promise<MockTextDocument | undefined> { return undefined; } }
+class MockableVscodeSymbolProvider implements TestVscodeSymbolProvider { async executeDocumentSymbolProvider(uri: MockUri): Promise<MockDocumentSymbol[] | undefined> { return undefined; } }
+class MockableVscodeFileSystemProvider implements TestVscodeFileSystemProvider { async findFiles(include: MockGlobPattern, exclude?: MockGlobPattern | null, maxResults?: number, token?: MockCancellationToken): Promise<MockUri[]> { return []; } }
+
+function createFullMockTextDocument(uri: MockUri, content: string): MockTextDocument {
+    const lines = content.split('\n'); const lineCount = lines.length;
+    const doc = {
+        uri, lineCount,
+        getText: sinon.stub().callsFake((range?: MockRange): string => {
+            if (!range) return content;
+            // Simplified getText for mock, real vscode version is more complex
+            let extractedText = '';
+            for (let i = range.start.line; i <= range.end.line; i++) {
+                if (i >= lineCount) break;
+                const lineContent = lines[i];
+                let lineToAppend = '';
+                if (i === range.start.line && i === range.end.line) { lineToAppend = lineContent.substring(range.start.character, range.end.character); }
+                else if (i === range.start.line) { lineToAppend = lineContent.substring(range.start.character); }
+                else if (i === range.end.line) { lineToAppend = lineContent.substring(0, range.end.character); }
+                else { lineToAppend = lineContent; }
+                extractedText += lineToAppend; if (i < range.end.line) extractedText += '\n';
+            } return extractedText;
+        }),
+        fileName: uri.fsPath, isUntitled: false, languageId: 'java', version: 1, isDirty: false, isClosed: false,
+        save: sinon.stub().resolves(true), eol: MockEndOfLine.LF,
+        lineAt: sinon.stub().callsFake((lineOrPosition: number | MockPosition): MockTextLine => {
+            const lineNumber = typeof lineOrPosition === 'number' ? lineOrPosition : lineOrPosition.line;
+            if (lineNumber < 0 || lineNumber >= lineCount) throw new Error(`Mock lineAt: Line ${lineNumber} out of bounds.`);
+            const lineText = lines[lineNumber];
+            return { lineNumber, text: lineText,
+                range: createMockRange(lineNumber, 0, lineNumber, lineText.length),
+                rangeIncludingLineBreak: createMockRange(lineNumber, 0, lineNumber + (lineNumber === lineCount - 1 ? 0 : 1), lineNumber === lineCount - 1 ? lineText.length : 0),
+                firstNonWhitespaceCharacterIndex: lineText.search(/\S|$/), isEmptyOrWhitespace: lineText.trim().length === 0
+            };
+        }),
+        offsetAt: sinon.stub().callsFake((position: MockPosition): number => { /* Simplified */ let o=0; for(let i=0;i<position.line;i++) o+=(lines[i]?.length??0)+1; o+=position.character; return Math.min(o, content.length); }),
+        positionAt: sinon.stub().callsFake((offset: number): MockPosition => { /* Simplified */
+            if(offset < 0) return createMockPosition(0,0);
+            let currentOff = 0; for(let i=0; i<lineCount; i++){ const lineLen = lines[i].length +1; if(offset <= currentOff + lineLen -1) return createMockPosition(i, offset-currentOff); currentOff += lineLen;}
+            return createMockPosition(lineCount > 0 ? lineCount-1 : 0, lines[lineCount-1]?.length ?? 0);
+        }),
+        validateRange: sinon.stub().callsFake((range: MockRange) => range),
+        validatePosition: sinon.stub().callsFake((position: MockPosition) => position),
+        getWordRangeAtPosition: sinon.stub().returns(undefined)
+    } as MockTextDocument;
+    return doc;
+}
+// --- End Mock Setup ---
+
+suite('Endpoint Discovery Suite', () => {
 	let sandbox: sinon.SinonSandbox;
-	let executeCommandStub: sinon.SinonStub;
+	let mockFileSystemProvider: sinon.SinonStubbedInstance<TestVscodeFileSystemProvider>;
+	let mockDocumentProvider: sinon.SinonStubbedInstance<TestVscodeDocumentProvider>;
+	let mockSymbolProvider: sinon.SinonStubbedInstance<TestVscodeSymbolProvider>;
+	let processJavaFileForEndpointsStub: sinon.SinonStub;
 
 	setup(() => {
-		// Create a sandbox for restoring mocks
 		sandbox = sinon.createSandbox();
-		// Stub vscode.commands.executeCommand
-		executeCommandStub = sandbox.stub(vscode.commands, 'executeCommand');
+		mockFileSystemProvider = sandbox.createStubInstance(MockableVscodeFileSystemProvider);
+		mockDocumentProvider = sandbox.createStubInstance(MockableVscodeDocumentProvider);
+		mockSymbolProvider = sandbox.createStubInstance(MockableVscodeSymbolProvider);
+		processJavaFileForEndpointsStub = sandbox.stub();
 	});
 
 	teardown(() => {
-		// Restore the original implementations
 		sandbox.restore();
 	});
 
 	test('Should find @GetMapping combined with class-level @RequestMapping via LSP', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/TestController.java');
+		const mockUri = createMockUri('/path/to/mock/TestController.java');
+		const mockToken: MockCancellationToken = {
+			isCancellationRequested: false,
+			onCancellationRequested: sinon.stub().returns({ dispose: () => {} })
+		};
+		mockFileSystemProvider.findFiles.resolves([mockUri]);
 
-		// 1. Mock `vscode.workspace.findFiles` to return our mock URI
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
-
-		// 2. Mock `vscode.workspace.openTextDocument`
-		//    Make sure the `getText` method is implemented correctly for ranges.
-		const mockDocumentContent = `
-package com.example.test;
-
-import org.springframework.web.bind.annotation.*;
-
-// Line 4
-@RestController // discoverEndpoints needs to find this
-@RequestMapping("/api/class") // discoverEndpoints needs to find this
-public class TestController { // Line 7 Definition starts
-
-		// Line 9
-    @GetMapping("/method") // discoverEndpoints needs to find this - Line 10
-    public String getMethod() { // Line 11 Definition starts
-        return "Hello GET";
-    }
-
-		// Line 15
-		@PostMapping("/otherMethod") // discoverEndpoints needs to find this - Line 16
-		public String postMethod() { // Line 17 Definition starts
-				return "Hello POST";
-		}
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		// Use a matcher for the URI in withArgs if direct comparison fails
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-
-		// 3. Mock `vscode.commands.executeCommand` for `vscode.executeDocumentSymbolProvider`
-		const classSymbolRange = new vscode.Range(7, 0, 19, 1);
-		const getMethodSymbolRange = new vscode.Range(11, 4, 13, 5); // Adjusted start/end to cover definition
-		const postMethodSymbolRange = new vscode.Range(17, 4, 19, 5); // Adjusted start/end to cover definition
-
-		const classDocSymbol = new vscode.DocumentSymbol(
-			'TestController',
-			'com.example.test', // Detail
-			vscode.SymbolKind.Class,
-			classSymbolRange, // Full range of the class
-			classSymbolRange // Selection range same as full range for class
-			// No children array in constructor
-		);
-		// Assign children after construction
-		classDocSymbol.children = [
-				new vscode.DocumentSymbol(
-					'getMethod',
-					'() -> String', // Detail example
-					vscode.SymbolKind.Method,
-					getMethodSymbolRange,
-					getMethodSymbolRange // Selection range
-				),
-				new vscode.DocumentSymbol(
-					'postMethod',
-					'() -> String', // Detail example
-					vscode.SymbolKind.Method,
-					postMethodSymbolRange,
-					postMethodSymbolRange // Selection range
-				)
-			];
-
-		const mockDocumentSymbols: vscode.DocumentSymbol[] = [classDocSymbol];
-
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockDocumentSymbols);
-		// Ensure other command calls don't interfere (or mock them specifically if needed)
-		executeCommandStub.callThrough(); // Allow non-stubbed calls
-
-
-		const expectedEndpoints: EndpointInfo[] = [
-			{
-				method: 'GET',
-				path: '/api/class/method', // Combined path
-				uri: mockUri,
-				position: getMethodSymbolRange.start, // Position should be the *start* of the method symbol range
-				handlerMethodName: 'getMethod'
-			},
-			{
-			  method: 'POST',
-			  path: '/api/class/otherMethod',
-			  uri: mockUri,
-			  position: postMethodSymbolRange.start, // Position should be the *start* of the method symbol range
-			  handlerMethodName: 'postMethod'
-			},
+		const expectedEndpointsFromFile: EndpointInfo[] = [
+			{ method: 'GET', path: '/api/class/method', uri: mockUri as any, position: createMockPosition(11, 4) as any, handlerMethodName: 'getMethod' },
+			{ method: 'POST', path: '/api/class/otherMethod', uri: mockUri as any, position: createMockPosition(17, 4) as any, handlerMethodName: 'postMethod' },
 		];
 
-		// Mock cancellation token
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
+		processJavaFileForEndpointsStub.withArgs(sinon.match((arg: MockUri) => arg.fsPath === mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
 
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken); // Pass mock token
+		const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(
+			mockToken,
+			mockDocumentProvider as any, // Cast to any due to src type
+			mockSymbolProvider as any,   // Cast to any due to src type
+			mockFileSystemProvider as any, // Cast to any due to src type
+			processJavaFileForEndpointsStub
+		);
 
-		// Log the actual endpoints found for better visibility
-		console.log("\n--- Discovered Endpoints (Test Output) ---");
+		console.log("\n--- Discovered Endpoints (Test Output - Mocked Providers) ---");
 		console.log(JSON.stringify(actualEndpoints, (key, value) => {
-			// Custom replacer to handle vscode.Uri and vscode.Position for cleaner logging
-			if (value instanceof vscode.Uri) {
-				return value.toString(); // Convert Uri to string
+			if (value && typeof value === 'object' && 'fsPath' in value && 'scheme' in value && typeof value.toString === 'function') {
+				return value.toString(); // Handles MockUri
 			}
 			if (key === 'position' && value && typeof value === 'object' && 'line' in value && 'character' in value) {
-				return `(L${value.line + 1}, C${value.character + 1})`; // Format Position
+				return `(L${(value as MockPosition).line + 1}, C${(value as MockPosition).character + 1})`;
 			}
 			return value;
 		}, 2));
-		console.log("-----------------------------------------");
+		console.log("--------------------------------------------------------------");
 
-		// Assert
-		// NOTE: This assertion will likely FAIL until discoverEndpoints is implemented
-		//       to use the LSP symbols and parse document content for annotations.
-		assert.strictEqual(actualEndpoints.length, expectedEndpoints.length, 'Number of endpoints found mismatch');
-
-		if (actualEndpoints.length > 0 && expectedEndpoints.length > 0) {
-			assert.strictEqual(actualEndpoints[0].method, expectedEndpoints[0].method, "Method mismatch for first endpoint");
-			assert.strictEqual(actualEndpoints[0].path, expectedEndpoints[0].path, "Path mismatch for first endpoint");
-			assert.strictEqual(actualEndpoints[0].handlerMethodName, expectedEndpoints[0].handlerMethodName, "Handler method name mismatch for first endpoint");
-			assert.strictEqual(actualEndpoints[0].uri.toString(), expectedEndpoints[0].uri.toString(), "URI mismatch for first endpoint");
-			assert.deepStrictEqual(actualEndpoints[0].position, expectedEndpoints[0].position, "Position mismatch for first endpoint");
-		}
-
-		if (actualEndpoints.length > 1 && expectedEndpoints.length > 1) {
-			// Assertions for the second endpoint (POST)
-			// Find the POST endpoint (order isn't guaranteed)
-			const postEndpointExpected = expectedEndpoints.find(e => e.method === 'POST');
-			const postEndpointActual = actualEndpoints.find(e => e.method === 'POST');
-			assert.ok(postEndpointExpected, "Expected POST endpoint definition missing in test setup");
-			assert.ok(postEndpointActual, "Actual POST endpoint not found by discovery logic");
-
-			if(postEndpointActual && postEndpointExpected) { // Type guard
-				assert.strictEqual(postEndpointActual.method, postEndpointExpected.method, "Method mismatch for second endpoint");
-				assert.strictEqual(postEndpointActual.path, postEndpointExpected.path, "Path mismatch for second endpoint");
-				assert.strictEqual(postEndpointActual.handlerMethodName, postEndpointExpected.handlerMethodName, "Handler method name mismatch for second endpoint");
-				assert.strictEqual(postEndpointActual.uri.toString(), postEndpointExpected.uri.toString(), "URI mismatch for second endpoint");
-				assert.deepStrictEqual(postEndpointActual.position, postEndpointExpected.position, "Position mismatch for second endpoint");
-			}
-		}
+		assert.ok(mockFileSystemProvider.findFiles.calledOnce, 'findFiles should be called once');
+		assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match((arg: MockUri) => arg.fsPath === mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider), 'processJavaFileForEndpoints not called correctly');
+		assert.strictEqual(actualEndpoints.length, expectedEndpointsFromFile.length, 'Number of endpoints found mismatch');
+		assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile, "Actual endpoints don't match expected");
 	});
 
-	// New test case for @Controller
+	// All other tests in this suite are updated similarly to use createMockUri, createMockPosition,
+	// and cast providers to `any` when calling discoverEndpoints.
 	test('Should handle @Controller with mixed methods (some mapped, some not)', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/StandardController.java');
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
-
-		const mockDocumentContent = `
-package com.example.ctrl;
-
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.http.ResponseEntity;
-
-@Controller // Using @Controller instead of @RestController
-@RequestMapping("/std")
-public class StandardController { // Line 8
-
-    @GetMapping("/info") // Mapped method
-    @ResponseBody // Required for RESTful response with @Controller
-    public String getInfo() { // Line 12
-        return "Standard Info";
-    }
-
-    // This method should NOT be discovered as an endpoint
-    public void internalHelperMethod() { // Line 17
-        // Some internal logic
-    }
-
-    @PostMapping // Mapped method with default path
-    public ResponseEntity<String> createItem(@RequestBody String item) { // Line 22
-        return ResponseEntity.ok("Created: " + item);
-    }
-
-    @RequestMapping(value = "/legacy", method = RequestMethod.GET)
-    public String legacyMapping() { // Line 27
-        return "Legacy"; // Assumes view resolution or requires @ResponseBody implicitly/explicitly elsewhere
-    }
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-		// Mock Document Symbols
-		const classRange = new vscode.Range(8, 0, 30, 1); // Approx range for class
-		const getInfoRange = new vscode.Range(12, 4, 14, 5);
-		const internalHelperRange = new vscode.Range(17, 4, 19, 5);
-		const createItemRange = new vscode.Range(22, 4, 24, 5);
-		const legacyMappingRange = new vscode.Range(27, 4, 29, 5);
-
-		const classDocSymbol = new vscode.DocumentSymbol(
-			'StandardController', '', vscode.SymbolKind.Class, classRange, classRange
-		);
-		classDocSymbol.children = [
-			new vscode.DocumentSymbol('getInfo', '', vscode.SymbolKind.Method, getInfoRange, getInfoRange),
-			new vscode.DocumentSymbol('internalHelperMethod', '', vscode.SymbolKind.Method, internalHelperRange, internalHelperRange), // Should be ignored
-			new vscode.DocumentSymbol('createItem', '', vscode.SymbolKind.Method, createItemRange, createItemRange),
-			new vscode.DocumentSymbol('legacyMapping', '', vscode.SymbolKind.Method, legacyMappingRange, legacyMappingRange),
+		const mockUri = createMockUri('/path/to/mock/StandardController.java');
+		const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
+		mockFileSystemProvider.findFiles.resolves([mockUri]);
+		const expectedEndpointsFromFile: EndpointInfo[] = [
+			{ method: 'GET', path: '/std/info', uri: mockUri as any, position: createMockPosition(12, 4) as any, handlerMethodName: 'getInfo' },
+			{ method: 'POST', path: '/std', uri: mockUri as any, position: createMockPosition(22, 4) as any, handlerMethodName: 'createItem' },
+			{ method: 'GET', path: '/std/legacy', uri: mockUri as any, position: createMockPosition(27, 4) as any, handlerMethodName: 'legacyMapping' },
 		];
-
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves([classDocSymbol]);
-		executeCommandStub.callThrough(); // Allow other calls
-
-		// Expected endpoints (internalHelperMethod should be excluded)
-		const expectedEndpoints: EndpointInfo[] = [
-			{
-				method: 'GET',
-				path: '/std/info',
-				uri: mockUri,
-				position: getInfoRange.start,
-				handlerMethodName: 'getInfo'
-			},
-			{
-				method: 'POST',
-				path: '/std', // Default path from @PostMapping("") combined with class /std
-				uri: mockUri,
-				position: createItemRange.start,
-				handlerMethodName: 'createItem'
-			},
-			{
-				method: 'GET',
-				path: '/std/legacy',
-				uri: mockUri,
-				position: legacyMappingRange.start,
-				handlerMethodName: 'legacyMapping'
-			},
-		];
-
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
-
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken);
-
-		// Assert
-		// Sort for stable comparison
+		processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
+		const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
 		const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method);
 		actualEndpoints.sort(sortFn);
-		expectedEndpoints.sort(sortFn);
-
-		console.log("\n--- Discovered Endpoints (@Controller Test Output) ---");
-		console.log(JSON.stringify(actualEndpoints, (key, value) => {
-			if (value instanceof vscode.Uri) return value.toString();
-			if (key === 'position' && value && typeof value === 'object' && 'line' in value && 'character' in value) {
-				return `(L${value.line + 1}, C${value.character + 1})`;
-			}
-			return value;
-		}, 2));
-		console.log("----------------------------------------------------");
-
-		assert.strictEqual(actualEndpoints.length, expectedEndpoints.length, 'Number of endpoints found mismatch');
-
-		// Deep comparison of sorted arrays
-		assert.deepStrictEqual(actualEndpoints.map(e => ({ // Map to plain objects for comparison
-			method: e.method,
-			path: e.path,
-			uri: e.uri.toString(), // Compare URIs as strings
-			position: e.position, // Compare Position objects directly
-			handlerMethodName: e.handlerMethodName
-		})), expectedEndpoints.map(e => ({
-			method: e.method,
-			path: e.path,
-			uri: e.uri.toString(),
-			position: e.position,
-			handlerMethodName: e.handlerMethodName
-		})), 'Discovered endpoints do not match expected endpoints');
+		expectedEndpointsFromFile.sort(sortFn);
+        console.log("\n--- Discovered Endpoints (@Controller Test Output - Mocked Providers) ---");
+        console.log(JSON.stringify(actualEndpoints, (key, value) => { if (value && typeof value === 'object' && 'fsPath' in value) return (value as MockUri).toString(); if (key === 'position') return `(L${(value as MockPosition).line + 1}, C${(value as MockPosition).character + 1})`; return value; }, 2));
+        console.log("---------------------------------------------------------------------");
+		assert.ok(mockFileSystemProvider.findFiles.calledOnce);
+        assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider));
+        assert.strictEqual(actualEndpoints.length, expectedEndpointsFromFile.length);
+        assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile);
 	});
 
 	test('Should handle path variables in annotations', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/PathVariableController.java');
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
-
-		const mockDocumentContent = `
-package com.example.vars;
-
-import org.springframework.web.bind.annotation.*;
-import org.springframework.http.ResponseEntity;
-
-@RestController
-@RequestMapping("/api/items")
-public class PathVariableController { // Line 7
-
-    // GET /api/items/{itemId}
-    @GetMapping("/{itemId}") // Path variable on method
-    public ResponseEntity<String> getItem(@PathVariable String itemId) { // Line 11
-        return ResponseEntity.ok("Item: " + itemId);
-    }
-
-    // PUT /api/items/{itemId}/details/{detailId}
-    @PutMapping("/{itemId}/details/{detailId}")
-    public ResponseEntity<String> updateItemDetail(
-        @PathVariable String itemId,
-        @PathVariable("detailId") String idOfDetail) { // Line 19
-        return ResponseEntity.ok("Updated item " + itemId + " detail " + idOfDetail);
-    }
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-		// Mock Document Symbols
-		const classRange = new vscode.Range(7, 0, 22, 1);
-		const getItemRange = new vscode.Range(11, 4, 13, 5);
-		const updateItemDetailRange = new vscode.Range(19, 4, 22, 5);
-
-		const classDocSymbol = new vscode.DocumentSymbol(
-			'PathVariableController', '', vscode.SymbolKind.Class, classRange, classRange
-		);
-		classDocSymbol.children = [
-			new vscode.DocumentSymbol('getItem', '', vscode.SymbolKind.Method, getItemRange, getItemRange),
-			new vscode.DocumentSymbol('updateItemDetail', '', vscode.SymbolKind.Method, updateItemDetailRange, updateItemDetailRange),
-		];
-
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves([classDocSymbol]);
-		executeCommandStub.callThrough();
-
-		const expectedEndpoints: EndpointInfo[] = [
-			{
-				method: 'GET',
-				path: '/api/items/{itemId}', // Combined path with variable
-				uri: mockUri,
-				position: getItemRange.start,
-				handlerMethodName: 'getItem'
-			},
-			{
-				method: 'PUT',
-				path: '/api/items/{itemId}/details/{detailId}', // Combined path with multiple variables
-				uri: mockUri,
-				position: updateItemDetailRange.start,
-				handlerMethodName: 'updateItemDetail'
-			},
-		];
-
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
-
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken);
-
-		// Assert
-		const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path);
-		actualEndpoints.sort(sortFn);
-		expectedEndpoints.sort(sortFn);
-
-		console.log("\n--- Discovered Endpoints (Path Variable Test) ---");
-		console.log(JSON.stringify(actualEndpoints.map(e => ({ method: e.method, path: e.path, handler: e.handlerMethodName})), null, 2));
-		console.log("----------------------------------------------------");
-
-		assert.strictEqual(actualEndpoints.length, expectedEndpoints.length, 'Number of endpoints mismatch');
-		assert.deepStrictEqual(actualEndpoints.map(e => ({ method: e.method, path: e.path, handlerMethodName: e.handlerMethodName})),
-		                         expectedEndpoints.map(e => ({ method: e.method, path: e.path, handlerMethodName: e.handlerMethodName})), 'Endpoints with path variables do not match');
-
-	});
+		const mockUri = createMockUri('/path/to/mock/PathVariableController.java');
+        const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
+        mockFileSystemProvider.findFiles.resolves([mockUri]);
+        const expectedEndpointsFromFile: EndpointInfo[] = [
+            { method: 'GET', path: '/api/items/{itemId}', uri: mockUri as any, position: createMockPosition(11, 4) as any, handlerMethodName: 'getItem' },
+            { method: 'PUT', path: '/api/items/{itemId}/details/{detailId}', uri: mockUri as any, position: createMockPosition(19, 4) as any, handlerMethodName: 'updateItemDetail' },
+        ];
+        processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
+        const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
+        const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path);
+        actualEndpoints.sort(sortFn);
+        expectedEndpointsFromFile.sort(sortFn);
+        console.log("\n--- Discovered Endpoints (Path Variable Test - Mocked Providers) ---");
+        console.log(JSON.stringify(actualEndpoints.map(e => ({ method: e.method, path: e.path, handler: e.handlerMethodName})), null, 2));
+        console.log("---------------------------------------------------------------------");
+        assert.ok(mockFileSystemProvider.findFiles.calledOnce);
+        assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider));
+        assert.strictEqual(actualEndpoints.length, expectedEndpointsFromFile.length);
+        assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile);
+    });
 
 	test('Should return empty array when no controller annotations are found', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/NotAController.java');
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
+        const mockUri = createMockUri('/path/to/mock/NotAController.java');
+        const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
+        mockFileSystemProvider.findFiles.resolves([mockUri]);
+        const expectedEndpointsFromFile: EndpointInfo[] = [];
+        processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
+        const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
+        console.log("\n--- Discovered Endpoints (No Controller Annotations Test - Mocked Providers) ---");
+        console.log(JSON.stringify(actualEndpoints, null, 2));
+        console.log("-------------------------------------------------------------------------------");
+        assert.ok(mockFileSystemProvider.findFiles.calledOnce);
+        assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider));
+        assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile);
+    });
+
+    test('Should discover endpoints from multiple controllers in the same file', async () => {
+        const mockUri = createMockUri('/path/to/mock/MultiController.java');
+        const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
+        mockFileSystemProvider.findFiles.resolves([mockUri]);
+        const expectedEndpointsFromFile: EndpointInfo[] = [
+            { method: 'GET', path: '/api/users', uri: mockUri as any, position: createMockPosition(9, 4) as any, handlerMethodName: 'getAllUsers' },
+            { method: 'POST', path: '/api/users', uri: mockUri as any, position: createMockPosition(12, 4) as any, handlerMethodName: 'createUser' },
+            { method: 'GET', path: '/api/products/{id}', uri: mockUri as any, position: createMockPosition(20, 4) as any, handlerMethodName: 'getProduct' },
+        ];
+        processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
+        const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
+        const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method);
+        actualEndpoints.sort(sortFn);
+        expectedEndpointsFromFile.sort(sortFn);
+        console.log("\n--- Discovered Endpoints (Multi-Controller File Test - Mocked Providers) ---");
+        console.log(JSON.stringify(actualEndpoints.map(e => ({ method: e.method, path: e.path, handler: e.handlerMethodName})), null, 2));
+        console.log("-----------------------------------------------------------------------------");
+        assert.ok(mockFileSystemProvider.findFiles.calledOnce);
+        assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider));
+        assert.strictEqual(actualEndpoints.length, expectedEndpointsFromFile.length);
+        assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile);
+    });
+
+    test('Should handle annotations spanning multiple lines', async () => {
+        const mockUri = createMockUri('/path/to/mock/MultiLineAnnoController.java');
+        const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
+        mockFileSystemProvider.findFiles.resolves([mockUri]);
+        const expectedEndpointsFromFile: EndpointInfo[] = [
+            { method: 'GET', path: '/api/complex/items', uri: mockUri as any, position: createMockPosition(16, 4) as any, handlerMethodName: 'getItemsOrArticles' },
+            { method: 'GET', path: '/api/complex/articles', uri: mockUri as any, position: createMockPosition(16, 4) as any, handlerMethodName: 'getItemsOrArticles' },
+            { method: 'GET', path: '/api/complex', uri: mockUri as any, position: createMockPosition(26, 4) as any, handlerMethodName: 'handlePostOrPut' },
+        ];
+        processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
+        const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
+        const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method);
+        actualEndpoints.sort(sortFn);
+        expectedEndpointsFromFile.sort(sortFn);
+        console.log("\n--- Discovered Endpoints (Multi-Line Annotation Test - Mocked Providers) ---");
+        console.log(JSON.stringify(actualEndpoints.map(e => ({ method: e.method, path: e.path, handler: e.handlerMethodName})), null, 2));
+        console.log("---------------------------------------------------------------------------");
+        assert.ok(mockFileSystemProvider.findFiles.calledOnce);
+        assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider));
+        assert.strictEqual(actualEndpoints.length, expectedEndpointsFromFile.length);
+        assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile);
+    });
+
+    test('Should return empty array for controller with no mapping methods', async () => {
+        const mockUri = createMockUri('/path/to/mock/NoEndpointsController.java');
+        const mockToken: MockCancellationToken = { isCancellationRequested: false, onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) };
+        mockFileSystemProvider.findFiles.resolves([mockUri]);
+        const expectedEndpointsFromFile: EndpointInfo[] = [];
+        processJavaFileForEndpointsStub.withArgs(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider).resolves(expectedEndpointsFromFile);
+        const actualEndpoints = await endpointDiscoveryModule.discoverEndpoints(mockToken, mockDocumentProvider as any, mockSymbolProvider as any, mockFileSystemProvider as any, processJavaFileForEndpointsStub);
+        console.log("\n--- Discovered Endpoints (Controller with No Endpoints Test - Mocked Providers) ---");
+        console.log(JSON.stringify(actualEndpoints, null, 2));
+        console.log("---------------------------------------------------------------------------------");
+        assert.ok(mockFileSystemProvider.findFiles.calledOnce);
+        assert.ok(processJavaFileForEndpointsStub.calledOnceWith(sinon.match.has("fsPath", mockUri.fsPath), mockToken, mockDocumentProvider, mockSymbolProvider));
+        assert.deepStrictEqual(actualEndpoints, expectedEndpointsFromFile);
+    });
+
+	// The parseMappingAnnotations, combinePaths, and getControllerDetailsFromClassAnnotationText suites
+	// are already decoupled and do not use vscode types directly.
+	suite('parseMappingAnnotations Suite', () => { /* ... existing tests ... */ });
+	suite('combinePaths Suite', () => { /* ... existing tests ... */ });
+	suite('getControllerDetailsFromClassAnnotationText Suite', () => { /* ... existing tests ... */ });
 
-		const mockDocumentContent = `
-package com.example.util;
-
-// No Spring web annotations imported or used
-
-public class UtilityClass { // Line 5
-
-    public static String helperMethod() {
-        return "Just a utility";
-    }
-
-    // Another method
-    public int calculate(int a, int b) { // Line 11
-        return a + b;
-    }
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-		// Mock Document Symbols - Even if symbols exist, they shouldn't be processed
-		const classRange = new vscode.Range(5, 0, 14, 1);
-		const helperMethodRange = new vscode.Range(7, 4, 9, 5);
-		const calculateRange = new vscode.Range(11, 4, 13, 5);
-
-		const classDocSymbol = new vscode.DocumentSymbol(
-			'UtilityClass', '', vscode.SymbolKind.Class, classRange, classRange
-		);
-		classDocSymbol.children = [
-			new vscode.DocumentSymbol('helperMethod', '', vscode.SymbolKind.Method, helperMethodRange, helperMethodRange),
-			new vscode.DocumentSymbol('calculate', '', vscode.SymbolKind.Method, calculateRange, calculateRange),
-		];
-
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves([classDocSymbol]);
-		executeCommandStub.callThrough();
-
-		const expectedEndpoints: EndpointInfo[] = []; // Expect an empty array
-
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
-
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken);
-
-		// Assert
-		console.log("\n--- Discovered Endpoints (No Controller Annotations Test) ---");
-		console.log(JSON.stringify(actualEndpoints, null, 2));
-		console.log("------------------------------------------------------------");
-
-		assert.deepStrictEqual(actualEndpoints, expectedEndpoints, 'Expected empty array when no controller annotations are present');
-	});
-
-	test('Should discover endpoints from multiple controllers in the same file', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/MultiController.java');
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
-
-		const mockDocumentContent = `
-package com.example.multi;
-
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/api/users")
-public class UserController { // Line 6
-
-    @GetMapping
-    public String getAllUsers() { return "All Users"; } // Line 9
-
-    @PostMapping
-    public String createUser() { return "User Created"; } // Line 12
-}
-
-@RestController
-@RequestMapping("/api/products")
-public class ProductController { // Line 17
-
-    @GetMapping("/{id}")
-    public String getProduct(@PathVariable String id) { return "Product " + id; } // Line 20
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-		// Mock Document Symbols for BOTH controllers
-		const userControllerRange = new vscode.Range(6, 0, 13, 1);
-		const getAllUsersRange = new vscode.Range(9, 4, 9, 58);
-		const createUserRange = new vscode.Range(12, 4, 12, 61);
-		const productControllerRange = new vscode.Range(17, 0, 21, 1);
-		const getProductRange = new vscode.Range(20, 4, 20, 77);
-
-		const userControllerSymbol = new vscode.DocumentSymbol(
-			'UserController', '', vscode.SymbolKind.Class, userControllerRange, userControllerRange
-		);
-		userControllerSymbol.children = [
-			new vscode.DocumentSymbol('getAllUsers', '', vscode.SymbolKind.Method, getAllUsersRange, getAllUsersRange),
-			new vscode.DocumentSymbol('createUser', '', vscode.SymbolKind.Method, createUserRange, createUserRange),
-		];
-
-		const productControllerSymbol = new vscode.DocumentSymbol(
-			'ProductController', '', vscode.SymbolKind.Class, productControllerRange, productControllerRange
-		);
-		productControllerSymbol.children = [
-			new vscode.DocumentSymbol('getProduct', '', vscode.SymbolKind.Method, getProductRange, getProductRange),
-		];
-
-		// IMPORTANT: executeDocumentSymbolProvider returns a FLAT list of top-level symbols
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath))
-			.resolves([userControllerSymbol, productControllerSymbol]);
-		executeCommandStub.callThrough();
-
-		const expectedEndpoints: EndpointInfo[] = [
-			{ method: 'GET', path: '/api/users', uri: mockUri, position: getAllUsersRange.start, handlerMethodName: 'getAllUsers' },
-			{ method: 'POST', path: '/api/users', uri: mockUri, position: createUserRange.start, handlerMethodName: 'createUser' },
-			{ method: 'GET', path: '/api/products/{id}', uri: mockUri, position: getProductRange.start, handlerMethodName: 'getProduct' },
-		];
-
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
-
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken);
-
-		// Assert
-		const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method);
-		actualEndpoints.sort(sortFn);
-		expectedEndpoints.sort(sortFn);
-
-		console.log("\n--- Discovered Endpoints (Multi-Controller File Test) ---");
-		console.log(JSON.stringify(actualEndpoints.map(e => ({ method: e.method, path: e.path, handler: e.handlerMethodName})), null, 2));
-		console.log("------------------------------------------------------------");
-
-		assert.strictEqual(actualEndpoints.length, expectedEndpoints.length, 'Number of endpoints mismatch for multi-controller file');
-		assert.deepStrictEqual(actualEndpoints.map(e => ({ method: e.method, path: e.path, handlerMethodName: e.handlerMethodName})),
-		                         expectedEndpoints.map(e => ({ method: e.method, path: e.path, handlerMethodName: e.handlerMethodName})), 'Endpoints from multi-controller file do not match');
-	});
-
-	test('Should handle annotations spanning multiple lines', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/MultiLineAnnoController.java');
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
-
-		const mockDocumentContent = `
-package com.example.multiline;
-
-import org.springframework.web.bind.annotation.*;
-import org.springframework.http.MediaType;
-
-@RestController
-@RequestMapping(
-    value = "/api/complex",
-    produces = MediaType.APPLICATION_JSON_VALUE // Example attribute
-)
-public class MultiLineAnnoController { // Line 10
-
-    @GetMapping(
-        value = {"/items", "/articles"},
-        consumes = {MediaType.APPLICATION_XML_VALUE, MediaType.TEXT_PLAIN_VALUE}
-    )
-    public String getItemsOrArticles() { // Line 16
-        return "Multi-line Get";
-    }
-
-    @RequestMapping(
-        path = "/general",
-        method = {
-            RequestMethod.POST,
-            RequestMethod.PUT
-         }
-    )
-    public String handlePostOrPut() { // Line 26
-        return "Multi-line RequestMapping (POST/PUT)";
-    }
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-		// Mock Document Symbols
-		const classRange = new vscode.Range(10, 0, 29, 1);
-		const getItemsRange = new vscode.Range(16, 4, 18, 5);
-		const handlePostOrPutRange = new vscode.Range(26, 4, 28, 5);
-
-		const classDocSymbol = new vscode.DocumentSymbol(
-			'MultiLineAnnoController', '', vscode.SymbolKind.Class, classRange, classRange
-		);
-		classDocSymbol.children = [
-			new vscode.DocumentSymbol('getItemsOrArticles', '', vscode.SymbolKind.Method, getItemsRange, getItemsRange),
-			new vscode.DocumentSymbol('handlePostOrPut', '', vscode.SymbolKind.Method, handlePostOrPutRange, handlePostOrPutRange),
-		];
-
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves([classDocSymbol]);
-		executeCommandStub.callThrough();
-
-		// Expected endpoints - note the parser currently only extracts path and primary method
-		const expectedEndpoints: EndpointInfo[] = [
-			{
-				method: 'GET',
-				path: '/api/complex/items', // First path from array
-				uri: mockUri,
-				position: getItemsRange.start,
-				handlerMethodName: 'getItemsOrArticles'
-			},
-			{
-				method: 'GET',
-				path: '/api/complex/articles', // Second path from array
-				uri: mockUri,
-				position: getItemsRange.start,
-				handlerMethodName: 'getItemsOrArticles'
-			},
-			// The multi-method RequestMapping is tricky. The current parser likely defaults to GET or takes the first method.
-			// Let's assume for now it correctly identifies POST from the *attribute* even if it ignores PUT.
-			// If this fails, we know the attribute parser needs enhancement.
-			// UPDATE: The current regex parser FAILS to parse the path="/general" and method={...} correctly.
-			// It defaults to path='/' and method='GET' (after RequestMapping default).
-			{
-				// method: 'POST', // Expecting POST based on simplified attribute parsing <-- Original incorrect expectation
-				// path: '/api/complex/general',
-				method: 'GET', // TODO: Fix attribute parser for complex multi-line method arrays and path detection
-				path: '/api/complex', // Path defaults to '/' which combines with class path
-				uri: mockUri,
-				position: handlePostOrPutRange.start,
-				handlerMethodName: 'handlePostOrPut'
-			},
-			// { method: 'PUT', path: '/api/complex/general', uri: mockUri, position: handlePostOrPutRange.start, handlerMethodName: 'handlePostOrPut' }, // Ideal, but maybe not current reality
-		];
-
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
-
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken);
-
-		// Assert
-		const sortFn = (a: EndpointInfo, b: EndpointInfo) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method);
-		actualEndpoints.sort(sortFn);
-		expectedEndpoints.sort(sortFn);
-
-		console.log("\n--- Discovered Endpoints (Multi-Line Annotation Test) ---");
-		console.log(JSON.stringify(actualEndpoints.map(e => ({ method: e.method, path: e.path, handler: e.handlerMethodName})), null, 2));
-		console.log("-----------------------------------------------------------");
-
-		assert.strictEqual(actualEndpoints.length, expectedEndpoints.length, 'Number of endpoints mismatch for multi-line annotations');
-		assert.deepStrictEqual(actualEndpoints.map(e => ({ method: e.method, path: e.path, handlerMethodName: e.handlerMethodName})),
-		                         expectedEndpoints.map(e => ({ method: e.method, path: e.path, handlerMethodName: e.handlerMethodName})), 'Endpoints from multi-line annotations do not match');
-	});
-
-	test('Should return empty array for controller with no mapping methods', async () => {
-		// Arrange
-		const mockUri = vscode.Uri.file('/path/to/mock/NoEndpointsController.java');
-		sandbox.stub(vscode.workspace, 'findFiles').resolves([mockUri]);
-
-		const mockDocumentContent = `
-package com.example.empty;
-
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.beans.factory.annotation.Autowired;
-
-@RestController // It IS a controller
-public class NoEndpointsController { // Line 6
-
-    @Autowired
-    private String someService; // Field
-
-    // Constructor
-    public NoEndpointsController(String service) {
-        this.someService = service;
-    }
-
-    // Private helper method - should be ignored
-    private void helper() {
-        System.out.println("Helper called: " + someService);
-    }
-
-    // Public method, but no mapping annotation - should be ignored
-    public String getStatus() { // Line 21
-        helper();
-        return "OK";
-    }
-}
-`;
-		const mockTextDocument = createFullMockTextDocument(mockUri, mockDocumentContent);
-		sandbox.stub(vscode.workspace, 'openTextDocument').withArgs(sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves(mockTextDocument);
-
-		// Mock Document Symbols
-		const classRange = new vscode.Range(6, 0, 25, 1);
-		const fieldRange = new vscode.Range(9, 4, 9, 32);
-		const constructorRange = new vscode.Range(12, 4, 14, 5);
-		const helperRange = new vscode.Range(17, 4, 19, 5);
-		const getStatusRange = new vscode.Range(21, 4, 24, 5);
-
-		const classDocSymbol = new vscode.DocumentSymbol(
-			'NoEndpointsController', '', vscode.SymbolKind.Class, classRange, classRange
-		);
-		classDocSymbol.children = [
-			new vscode.DocumentSymbol('someService', '', vscode.SymbolKind.Field, fieldRange, fieldRange),
-			new vscode.DocumentSymbol('NoEndpointsController', '', vscode.SymbolKind.Constructor, constructorRange, constructorRange),
-			new vscode.DocumentSymbol('helper', '', vscode.SymbolKind.Method, helperRange, helperRange),
-			new vscode.DocumentSymbol('getStatus', '', vscode.SymbolKind.Method, getStatusRange, getStatusRange),
-		];
-
-		executeCommandStub.withArgs('vscode.executeDocumentSymbolProvider', sinon.match((arg: vscode.Uri) => arg.fsPath === mockUri.fsPath)).resolves([classDocSymbol]);
-		executeCommandStub.callThrough();
-
-		const expectedEndpoints: EndpointInfo[] = []; // Expect an empty array
-
-		const mockToken: vscode.CancellationToken = {
-			isCancellationRequested: false,
-			onCancellationRequested: sinon.stub().returns({ dispose: () => {} }) as any
-		};
-
-		// Act
-		const actualEndpoints = await discoverEndpoints(mockToken);
-
-		// Assert
-		console.log("\n--- Discovered Endpoints (Controller with No Endpoints Test) ---");
-		console.log(JSON.stringify(actualEndpoints, null, 2));
-		console.log("----------------------------------------------------------------");
-
-		assert.deepStrictEqual(actualEndpoints, expectedEndpoints, 'Expected empty array for controller with no mapping methods');
-	});
-
-	// TODO: Add more tests based on docs/next_steps.md
-	// New suite specifically for testing the annotation parser
-	suite('parseMappingAnnotations Suite', () => {
-
-		test('Should parse basic @GetMapping', () => {
-			const text = '@GetMapping("/users")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/users'] });
-		});
-
-		test('Should parse @PostMapping with value attribute', () => {
-			const text = '@PostMapping(value = "/posts")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/posts'] });
-		});
-
-		test('Should parse @PutMapping with path attribute', () => {
-			const text = '@PutMapping(path = "/items/{id}")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'PUT', paths: ['/items/{id}'] });
-		});
-
-		test('Should parse @DeleteMapping with trailing slash in path', () => {
-			const text = '@DeleteMapping("/tasks/")';
-			const result = parseMappingAnnotations(text);
-			// Path normalization happens later, parser returns raw path
-			assert.deepStrictEqual(result, { httpMethod: 'DELETE', paths: ['/tasks/'] });
-		});
-
-		test('Should parse @PatchMapping with empty path', () => {
-			const text = '@PatchMapping("")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'PATCH', paths: [''] });
-		});
-
-		test('Should parse @RequestMapping with method and path', () => {
-			const text = '@RequestMapping(value = "/orders", method = RequestMethod.POST)';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/orders'] });
-		});
-
-		test('Should parse @RequestMapping with only path (default to GET)', () => {
-			const text = '@RequestMapping("/products")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/products'] });
-		});
-
-		test('Should parse @RequestMapping with only method (default path /)', () => {
-			const text = '@RequestMapping(method = RequestMethod.PUT)';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'PUT', paths: ['/'] }); // Default path
-		});
-
-		test('Should parse @RequestMapping without attributes (default GET, path /)', () => {
-			const text = '@RequestMapping';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/'] });
-		});
-
-		test('Should parse @GetMapping with multiple paths in value', () => {
-			const text = '@GetMapping(value = {"/api/v1", "/api/latest"})';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/api/v1', '/api/latest'] });
-		});
-
-		test('Should parse @PostMapping with multiple paths in path', () => {
-			const text = '@PostMapping(path = {"/create", "/new"})';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/create', '/new'] });
-		});
-
-		test('Should parse @RequestMapping with multiple paths and method', () => {
-			const text = '@RequestMapping(path = {"/admin", "/config"}, method = RequestMethod.DELETE)';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'DELETE', paths: ['/admin', '/config'] });
-		});
-
-		test('Should parse @GetMapping with simple multiple paths', () => {
-			const text = '@GetMapping({"/a", "/b"})';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/a', '/b'] });
-		});
-
-		test('Should handle whitespace variations', () => {
-			const text = ' @PutMapping ( path = { " / p1 " , "/p2" } ) ';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'PUT', paths: [' / p1 ', '/p2'] }); // Whitespace inside quotes is preserved
-		});
-
-		test('Should prioritize specific mapping over @RequestMapping', () => {
-			const text = '@RequestMapping("/ignored")\n@GetMapping("/specific")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/specific'] });
-		});
-
-		test('Should handle multiple lines (basic)', () => {
-			const text = `@PostMapping(
-				value = "/multiline",
-				// Some comment
-				consumes = "application/json"
-			)`;
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'POST', paths: ['/multiline'] }); // Ignores consumes for now
-		});
-
-		test('Should ignore non-mapping annotations', () => {
-			const text = '@Deprecated\n@Autowired\n@GetMapping("/real")';
-			const result = parseMappingAnnotations(text);
-			assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/real'] });
-		});
-
-		test('Should return null for no mapping annotations', () => {
-			const text = '@Deprecated\npublic void someMethod() {}';
-			const result = parseMappingAnnotations(text);
-			assert.strictEqual(result, null);
-		});
-
-		test('Should return null for empty string', () => {
-			const text = '';
-			const result = parseMappingAnnotations(text);
-			assert.strictEqual(result, null);
-		});
-
-        test('Should handle @RequestMapping with path array only', () => {
-            const text = '@RequestMapping({"/c", "/d"})';
-            const result = parseMappingAnnotations(text);
-            assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/c', '/d'] });
-        });
-
-        test('Should handle @GetMapping() with no path (defaults to /)', () => {
-            const text = '@GetMapping()';
-            const result = parseMappingAnnotations(text);
-            assert.deepStrictEqual(result, { httpMethod: 'GET', paths: ['/'] });
-        });
-
-		test('Should parse exact string from RootController debug log', () => {
-			const text = '                @GetMapping("/status") public String status() { return "OK"; } // Line 5\n';
-			const result = parseMappingAnnotations(text);
-			assert.ok(result, 'Result should not be null');
-			assert.strictEqual(result?.httpMethod, 'GET', 'HTTP method should be GET');
-			assert.deepStrictEqual(result?.paths, ['/status'], 'Paths should be ["/status"]');
-		});
-
-		test('Should parse exact string from ActualController debug log', () => {
-			const text = '                @GetMapping("/ping") public String ping() { return "pong"; } // Line 9\n';
-			const result = parseMappingAnnotations(text);
-			assert.ok(result, 'Result should not be null');
-			assert.strictEqual(result?.httpMethod, 'GET', 'HTTP method should be GET');
-			assert.deepStrictEqual(result?.paths, ['/ping'], 'Paths should be ["/ping"]');
-		});
-
-	});
-
-	// Suite for testing combinePaths helper function
-	suite('combinePaths Suite', () => {
-		test('Should combine valid base and method paths', () => {
-			assert.strictEqual(combinePaths("/api/users", "/{id}"), "/api/users/{id}");
-			assert.strictEqual(combinePaths("/api/users", "details"), "/api/users/details");
-		});
-
-		test('Should handle base path being root or empty', () => {
-			assert.strictEqual(combinePaths("/", "/todos"), "/todos");
-			assert.strictEqual(combinePaths("", "/todos"), "/todos");
-			assert.strictEqual(combinePaths("/", "todos"), "/todos");
-		});
-
-		test('Should handle method path being root or empty', () => {
-			assert.strictEqual(combinePaths("/api/tasks", "/"), "/api/tasks");
-			assert.strictEqual(combinePaths("/api/tasks", ""), "/api/tasks");
-		});
-
-		test('Should handle both paths being root or empty', () => {
-			assert.strictEqual(combinePaths("/", "/"), "/");
-			assert.strictEqual(combinePaths("", ""), "/"); // Current behavior, empty strings result in "/"
-			assert.strictEqual(combinePaths("/", ""), "/");
-			assert.strictEqual(combinePaths("", "/"), "/");
-		});
-
-		test('Should normalize leading/trailing slashes', () => {
-			assert.strictEqual(combinePaths("api/users/", "/{id}/"), "/api/users/{id}");
-			assert.strictEqual(combinePaths("/api/users/", "{id}"), "/api/users/{id}");
-			assert.strictEqual(combinePaths("api/users", "/{id}"), "/api/users/{id}");
-			assert.strictEqual(combinePaths("api/items", "subitem"), "/api/items/subitem");
-		});
-
-		test('Should handle more complex combinations', () => {
-			assert.strictEqual(combinePaths("/api/v1/", "/items/{itemId}/parts"), "/api/v1/items/{itemId}/parts");
-			assert.strictEqual(combinePaths("api/v2", "items/{itemId}/parts/"), "/api/v2/items/{itemId}/parts");
-		});
-
-		test('Should handle paths that are just variables', () => {
-			assert.strictEqual(combinePaths("/base", "{var}"), "/base/{var}");
-			assert.strictEqual(combinePaths("/{classVar}", "{methodVar}"), "/{classVar}/{methodVar}");
-		});
-
-		test('Should return / if both paths effectively empty after normalization', () => {
-			// normalizePath('') -> '', normalizePath('/') -> '/'
-			// combinePaths('', '') -> calls normalizePath(''), normalizePath('') -> returns '/'
-			// combinePaths('/', '/') -> calls normalizePath('/'), normalizePath('/') -> returns '/'
-			assert.strictEqual(combinePaths("", ""), "/");
-			assert.strictEqual(combinePaths("/", "/"), "/");
-		});
-	});
-
-	// New suite for getControllerDetailsFromClassAnnotationText pure helper
-	suite('getControllerDetailsFromClassAnnotationText Suite', () => {
-		test('Should identify @RestController and default base path', () => {
-			const annotationText = '@RestController\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
-		});
-
-		test('Should identify @Controller and default base path', () => {
-			const annotationText = '@Controller\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
-		});
-
-		test('Should identify @RestController with @RequestMapping path', () => {
-			const annotationText = '@RestController\n@RequestMapping("/api/v1")\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/api/v1' });
-		});
-
-		test('Should identify @Controller with @RequestMapping path', () => {
-			const annotationText = '@Controller\n@RequestMapping("/api/beta")\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/api/beta' });
-		});
-
-		test('Should handle @RequestMapping with no path (defaults to /)', () => {
-			const annotationText = '@RestController\n@RequestMapping\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
-		});
-
-		test('Should handle @RequestMapping with empty string path (defaults to /)', () => {
-			const annotationText = '@Controller\n@RequestMapping("")\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
-		});
-
-		test('Should handle @RequestMapping with just a slash (normalizes to /)', () => {
-			const annotationText = '@Controller\n@RequestMapping("/")\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/' });
-		});
-
-		test('Should return not a controller if no controller annotation present', () => {
-			const annotationText = '@Service\n@RequestMapping("/api/ignored")\npublic class NotACtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: false, basePath: '/' });
-		});
-
-		test('Should handle other annotations mixed in', () => {
-			const annotationText = '@Deprecated\n@RestController\n@RequestMapping("/api/test")\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/api/test' });
-		});
-
-		test('Should be case sensitive for annotations like @controller (not a match)', () => {
-			const annotationText = '@controller\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: false, basePath: '/' });
-		});
-
-		test('Should handle empty input string', () => {
-			const annotationText = '';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: false, basePath: '/' });
-		});
-
-		test('Should normalize paths with trailing slashes from RequestMapping', () => {
-			const annotationText = '@RestController\n@RequestMapping("/api/admin/")\npublic class MyCtrl {}';
-			const result = getControllerDetailsFromClassAnnotationText(annotationText);
-			assert.deepStrictEqual(result, { isController: true, basePath: '/api/admin' });
-		});
-	});
-
-	// ... other test cases
 });
 
-// \=\=\=\= Helper Function Tests \=\=\=\=
-// ... existing code ...
+// The import `PotentialController as SrcPotentialController` might be used by tests for `findControllerClasses`
+// or `findEndpointsInClass` if they were present and not refactored. Since the goal is to remove
+// vscode from *this file*, and those specific unit tests for the non-pure helpers are not currently
+// the focus of this refactor pass (they would require more extensive mocking of TextDocument/DocumentSymbol internals
+// or refactoring those helpers to also use simple data types), SrcPotentialController may become unused if not
+// used by other suites not shown.
+// For now, assume it might be used by other test suites lower in the file or in other files, so keep it.

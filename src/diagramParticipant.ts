@@ -8,6 +8,7 @@ import createDOMPurify from 'dompurify';
 import { EndpointInfo, discoverEndpoints } from './endpoint-discovery'; // Corrected: discoverEndpoints and EndpointInfo from here
 import { disambiguateEndpoint } from './endpoint-disambiguation'; // Corrected: disambiguateEndpoint from here
 import { buildCallHierarchyTree, CustomHierarchyNode } from './call-hierarchy'; // Import from new module
+import { generateMermaidSequenceDiagram } from '../src/mermaid-sequence-translator'; // Added import
 // Removed import for MermaidService as it's unused.
 // Removed import for TelemetryService and related types as they are unused.
 // Removed import for Logger as vscode.TelemetryLogger is used.
@@ -415,9 +416,23 @@ export async function handleRestEndpoint(params: CommandHandlerParams, naturalLa
         }
 
         if (hierarchyRoot) {
-            stream.markdown(`Successfully built call hierarchy for ${hierarchyRoot.item.name}. Children: ${hierarchyRoot.children.length}, Parents: ${hierarchyRoot.parents.length}. (Details might be logged).`);
+            // stream.markdown(`Successfully built call hierarchy for ${hierarchyRoot.item.name}. Children: ${hierarchyRoot.children.length}, Parents: ${hierarchyRoot.parents.length}. (Details might be logged).`);
             logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_built', itemName: hierarchyRoot.item.name, duration: Date.now() - startTime });
-            // Here you would typically do something with hierarchyRoot, e.g., generate a diagram
+
+            stream.progress('Generating sequence diagram...');
+            const mermaidSyntax = generateMermaidSequenceDiagram(hierarchyRoot);
+
+            await createAndShowDiagramWebview(
+                extensionContext, // Use params.extensionContext
+                logger,           // Use params.logger
+                stream,           // Use params.stream
+                mermaidSyntax,
+                'restEndpointSequenceDiagram', // panelId
+                `Call Sequence: ${targetEndpoint.method} ${targetEndpoint.path}`.replace(/\//g, '_'), // panelTitle, sanitize slashes
+                'restEndpoint', // commandName for logging
+                `call_sequence_${targetEndpoint.handlerMethodName}` // exportFileNameBase
+            );
+
         } else {
             stream.markdown(`Could not build call hierarchy data for ${targetEndpoint.method} ${targetEndpoint.path}.`);
             logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_build_failed', duration: Date.now() - startTime });

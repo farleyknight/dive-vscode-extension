@@ -95,7 +95,7 @@ public class TodoStatusController {
         *   Combine class-level and method-level paths. Determine the HTTP method. *(Implemented)*
         *   Create the structured list: `[{ method: string, path: string, uri: vscode.Uri, position: vscode.Position, handlerMethodName: string, description?: string }, ...]`. *(Implemented)*
     *   **Implement `disambiguateEndpoint`:** Match the user's natural language query against the discovered endpoints. Handle ambiguity. *(Not Started - Stub Exists)*
-    *   **Unit Tests (`test/suite/endpoint-discovery.test.ts`):** *(Partially Completed - Unit tests for `parseMappingAnnotations` are implemented. Initial integration test for `discoverEndpoints` is passing. **Needs significant expansion for `discoverEndpoints` logic, edge cases, and integration points.**)*
+    *   **Unit Tests (`test/suite/endpoint-discovery.test.ts`):** *(Partially Completed - Adhering to Decoupling Principle: `parseMappingAnnotations` tests are fully decoupled. Initial `discoverEndpoints` integration tests use mocked `vscode` abstractions. **Significant expansion needed for `discoverEndpoints` logic, strictly following decoupling.**)*
     *   **E2E Tests (`test/suite/e2e/e2e.test.ts`):** *(Completed for Investigation)* - E2E tests executed LSP commands, revealing limitations and informing the hybrid strategy. No further E2E work needed *for discovery* at this stage. E2E test logging improved for readability.
 2.  **Java LSP Call Hierarchy Integration:** *(Not Started - Depends on Step 1)*
     *   Identify Java extension call hierarchy command(s) (e.g., `vscode.prepareCallHierarchy`, `vscode.provideOutgoingCalls`).
@@ -143,13 +143,14 @@ public class TodoStatusController {
     *   **Status:**
         *   `discoverEndpoints`: *(Implementation Done)* - Implemented based on the **hybrid approach**. It uses LSP symbols to find methods/classes and text parsing (`parseMappingAnnotations`) to extract annotation details.
         *   `disambiguateEndpoint`: *(Not Started - Stub Exists)*
-        *   Unit Tests (`test/suite/endpoint-discovery.test.ts`): *(Partially Completed - Unit tests for `parseMappingAnnotations` are implemented. Initial integration test for `discoverEndpoints` is passing. **Needs significant expansion for `discoverEndpoints` logic, edge cases, and integration points.**)*
+        *   Unit Tests (`test/suite/endpoint-discovery.test.ts`): *(Partially Completed - Adhering to Decoupling Principle: `parseMappingAnnotations` tests are fully decoupled. Initial `discoverEndpoints` integration tests use mocked `vscode` abstractions. **Significant expansion needed for `discoverEndpoints` logic, strictly following decoupling.**)*
         *   E2E Tests (`test/suite/e2e/e2e.test.ts`): *(Completed for Investigation)* - E2E tests executed LSP commands, revealing limitations and informing the hybrid strategy. No further E2E work needed *for discovery* at this stage. E2E test logging improved for readability.
     *   **Approach (Hybrid LSP + Regex):** *(Implemented for discovery)*
         *   Use LSP (`documentSymbolProvider` or similar) to identify candidate controller classes and handler methods and get their precise locations (`Uri`, `Position`). *(Done)*
         *   Read the source code lines around these locations. *(Done)*
         *   Use **text/regex parsing** (in a dedicated, testable function like `parseMappingAnnotations`) to find mapping annotations on those lines and extract path/method parameters. *(Parsing function implemented and unit tested).* *(Done)*
         *   Combine paths and determine HTTP methods. *(Done)*
+        *   **NEW:** Modify the endpoint list display in the chat to include line numbers for each endpoint, e.g., `GET /api/todo-statuses in TodoStatusController.java (lines 22-25)`. This likely involves adjusting how `EndpointInfo` is formatted or how the list is generated in `disambiguateEndpoint` or the calling code. *(Pending)*
         *   Implement `disambiguateEndpoint` logic. *(Pending)*
         *   Expand unit tests (`endpoint-discovery.test.ts`) focusing on the `discoverEndpoints` function itself and any remaining parsing edge cases and LSP/file reading integration. *(Pending)*
     *   **Test Fixtures & Coverage (`test/fixtures/java-spring-test-project`):**
@@ -178,7 +179,7 @@ public class TodoStatusController {
 2.  **Endpoint Discovery and Disambiguation:** ***(Current Focus)***
     *   Implement `discoverEndpoints` logic in `src/endpoint-discovery.ts` using the **Hybrid LSP + Regex approach**. *(Implementation Done)*
     *   Implement `disambiguateEndpoint` logic in `src/endpoint-discovery.ts`. *(Stub exists)*
-    *   **Add comprehensive unit tests** in `test/suite/endpoint-discovery.test.ts`, focusing **primarily** on the **`discoverEndpoints` integration logic** and any remaining edge cases for `parseMappingAnnotations`. Mock simple LSP location results. *(Needs major expansion)*
+    *   **Add comprehensive unit tests** in `test/suite/endpoint-discovery.test.ts`, focusing **primarily** on the **`discoverEndpoints` integration logic** and any remaining edge cases for `parseMappingAnnotations`. Mock simple LSP location results. *(Partially Completed - Adhering to Decoupling Principle: `parseMappingAnnotations` tests are fully decoupled. Initial `discoverEndpoints` integration tests use mocked `vscode` abstractions. **Significant expansion needed for `discoverEndpoints` logic, strictly following decoupling.**)*
     *   ~~Create E2E tests in `test/suite/e2e/index.ts` to investigate LSP behavior.~~ *(E2E Investigation Completed)* Limited E2E integration tests can be added *later* if deemed necessary after unit tests are complete.
 3.  **Java LSP Call Hierarchy Integration:** *(Next - Depends on Step 2)*
     *   Identify Java extension call hierarchy command(s).
@@ -201,7 +202,7 @@ public class TodoStatusController {
 ### Goal: Implement & Test Endpoint Discovery (`src/endpoint-discovery.ts`)
 
 *   **Goal:** Implement the `discoverEndpoints` function using the **hybrid LSP + Regex approach** and write comprehensive **unit tests**, focusing specifically on the **regex/text parsing** component.
-*   **Status:** E2E investigation completed, defining the hybrid strategy. The helper function `parseMappingAnnotations` for annotation parsing is **implemented and significantly unit tested**. The main `discoverEndpoints` function implementation is **done**. Its specific unit tests need **significant expansion**.
+*   **Status:** E2E investigation completed, defining the hybrid strategy. The helper function `parseMappingAnnotations` for annotation parsing is **implemented and significantly unit tested (fully decoupled from `vscode`)**. The main `discoverEndpoints` function implementation is **done**. Its specific unit tests (which already mock `vscode` abstractions) **need significant expansion, continuing to adhere strictly to the `vscode` decoupling principle**.
 *   **Annotations to Support & Test (for Regex/Text Parsing via Unit Tests):**
     *   `@RestController`, `@Controller` (with `@ResponseBody`)
     *   `@RequestMapping` (Class/Method, various attributes: `path`, `value`, `method`, `params`, `headers`, `consumes`, `produces`) - ***Unit tests largely implemented for `parseMappingAnnotations`***
@@ -215,41 +216,41 @@ public class TodoStatusController {
     *   **Write extensive unit tests** mocking simple LSP symbol results but **thoroughly testing the parsing logic** against various annotation formats found in `test/fixtures/java-spring-test-project`. ***(Status: Unit tests for `parseMappingAnnotations` are done. Need tests for `discoverEndpoints` itself).***
     *   (Later) Consider adding a few E2E tests to verify the LSP-to-parser integration points work.
 *   **Test Categories & Cases (Ensure Fixtures & Unit Tests Exist):**
-        *   **Basic Discovery & HTTP Methods:** *(Fixtures Cover Cases - Need **Unit Tests** for `discoverEndpoints` integration)*
-        *   Find `@PostMapping` on a method in a `@RestController`. *(Unit Test for parsing exists)*
-        *   Find `@PutMapping`. *(Unit Test for parsing exists)*
-        *   Find `@DeleteMapping`. *(Unit Test for parsing exists)*
-        *   Find `@PatchMapping`. *(Unit Test for parsing exists)*
-        *   Find `@RequestMapping` with `method = RequestMethod.XXX`. *(Unit Test for parsing exists)*
-        *   Handle `@RequestMapping` without specific method (defaults to GET). *(Unit Test for parsing exists)*
-    *   **Path Variations:** *(Fixtures Cover Cases - Need **Unit Tests** for `discoverEndpoints` integration)*
+        *   **Basic Discovery & HTTP Methods:** *(Fixtures Cover Cases - An initial integration **Unit Test** for \`discoverEndpoints\` covering basic discovery is passing. Needs significant **Expansion** for comprehensive HTTP method handling and other specific cases listed below.)*
+        *   Find \`@PostMapping\` on a method in a \`@RestController\`. *(Unit Test for parsing exists)*
+        *   Find \`@PutMapping\`. *(Unit Test for parsing exists)*
+        *   Find \`@DeleteMapping\`. *(Unit Test for parsing exists)*
+        *   Find \`@PatchMapping\`. *(Unit Test for parsing exists)*
+        *   Find \`@RequestMapping\` with \`method = RequestMethod.XXX\`. *(Unit Test for parsing exists)*
+        *   Handle \`@RequestMapping\` without specific method (defaults to GET). *(Unit Test for parsing exists)*
+    *   **Path Variations:** *(Fixtures Cover Cases - Basic path combination is covered by the initial passing integration **Unit Test** for \`discoverEndpoints\`. Needs significant **Expansion** for more complex scenarios and specific cases listed below, though the sub-bullet on combining paths already notes its initial test.)*
         *   Combine class and method level paths. *(Basic Unit Test Passing - Needs More Coverage)*
-        *   Handle path variables (`/users/{userId}`). *(Unit Test for parsing exists - path stored as string)*
-        *   Handle multiple paths (`@GetMapping({"/a", "/b"})`). *(Unit Test for parsing exists)*
-        *   Handle root paths (`/`) and empty paths (`""`). *(Unit Test for parsing exists)*
+        *   Handle path variables (\`/users/{userId}\`). *(Unit Test for parsing exists - path stored as string)*
+        *   Handle multiple paths (\`@GetMapping({"/a", "/b"})\`). *(Unit Test for parsing exists)*
+        *   Handle root paths (\`/\`) and empty paths (\`""\`). *(Unit Test for parsing exists)*
         *   Handle paths with/without leading/trailing slashes. *(Unit Test for parsing exists - normalization is separate)*
     *   **Annotation Placement & Combinations:** *(Fixtures Cover Cases - Need **Unit Tests** for `discoverEndpoints` integration)*
-        *   Find endpoints in `@RestController` without class-level `@RequestMapping`. *(Needs `discoverEndpoints` Unit Test)*
-        *   Find endpoints in `@Controller` using method-level `@ResponseBody`. *(Needs `discoverEndpoints` Unit Test)*
-        *   Verify methods *without* mapping annotations are ignored. *(Needs `discoverEndpoints` Unit Test)*
-        *   Verify parameter annotations don't prevent discovery. *(Needs `discoverEndpoints` Unit Test)*
-        *   Verify `ResponseEntity` return type doesn't prevent discovery. *(Needs `discoverEndpoints` Unit Test)*
+        *   Find endpoints in \`@RestController\` without class-level \`@RequestMapping\`. *(Needs \`discoverEndpoints\` Unit Test)*
+        *   Find endpoints in \`@Controller\` using method-level \`@ResponseBody\`. *(Needs \`discoverEndpoints\` Unit Test)*
+        *   Verify methods *without* mapping annotations are ignored. *(Needs \`discoverEndpoints\` Unit Test)*
+        *   Verify parameter annotations don't prevent discovery. *(Needs \`discoverEndpoints\` Unit Test)*
+        *   Verify \`ResponseEntity\` return type doesn't prevent discovery. *(Needs \`discoverEndpoints\` Unit Test)*
     *   **Multiple Files/Controllers:** *(Covered by Fixtures)*
-        *   Discover endpoints spread across multiple files. *(Needs `discoverEndpoints` Unit Test)*
+        *   Discover endpoints spread across multiple files. *(Needs \`discoverEndpoints\` Unit Test)*
     *   **Edge Cases:**
-        *   Handle no relevant annotations found (empty list). *(Unit Test for parsing exists - returns null. Need `discoverEndpoints` test)*
+        *   Handle no relevant annotations found (empty list). *(Unit Test for parsing exists - returns null. Need \`discoverEndpoints\` test)*
         *   Handle annotations spanning multiple lines. *(Unit Test for parsing exists)*
         *   Handle comments within/between annotations. *(Unit Test for parsing exists)*
         *   **Testing:** ***PRIORITY:***
-            *   Write/expand **unit tests** (`test/suite/endpoint-discovery.test.ts`) focusing heavily on the **`discoverEndpoints` logic**, mocking LSP results and file content, and covering integration points. ***(Status: Parsing logic unit tests (`parseMappingAnnotations`) largely complete. Initial integration test for `discoverEndpoints` is passing. Needs significant expansion.)***
+            *   Write/expand **unit tests** (\`test/suite/endpoint-discovery.test.ts\`), strictly adhering to the `vscode` decoupling principle, focusing heavily on the **\`discoverEndpoints\` logic**, mocking LSP results and file content, and covering integration points. ***(Status: Parsing logic unit tests (\`parseMappingAnnotations\`) are largely complete and fully decoupled. Initial `discoverEndpoints` integration tests use mocked `vscode` abstractions. Significant expansion is needed for `discoverEndpoints` logic, strictly following this decoupling principle.)***
             *   Unit test disambiguation logic. *(Pending)*
             *   (Later) Consider minimal E2E tests for basic integration verification if needed.
             *   Manually test.
     3.  **Java LSP Call Hierarchy Integration:** *(Next Step)*
-        *   Identify the correct VS Code command provided by the installed Java extension for fetching call hierarchies (e.g., `vscode.prepareCallHierarchy`, `java.showCallHierarchy`, followed by `vscode.provideOutgoingCalls`).
-        *   Use `vscode.commands.executeCommand` to invoke the call hierarchy provider with the specific URI and position identified in step 2 (**using the location found via LSP in the hybrid discovery**).
+        *   Identify the correct VS Code command provided by the installed Java extension for fetching call hierarchies (e.g., \`vscode.prepareCallHierarchy\`, \`java.showCallHierarchy\`, followed by \`vscode.provideOutgoingCalls\`).
+        *   Use \`vscode.commands.executeCommand\` to invoke the call hierarchy provider with the specific URI and position identified in step 2 (**using the location found via LSP in the hybrid discovery**).
 
 4.  **Sequence Diagram Generation:**
     *   Create a function that traverses the call hierarchy data structure generated in step 3.
-    *   Translate the call flow (classes/methods calling other methods) into a Mermaid `sequenceDiagram` syntax.
+    *   Translate the call flow (classes/methods calling other methods) into a Mermaid \`sequenceDiagram\` syntax.
     *   Add unit tests for the generation logic.

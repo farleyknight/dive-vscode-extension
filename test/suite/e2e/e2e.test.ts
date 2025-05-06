@@ -37,7 +37,7 @@ const commandKeywords = [
 	'annotation'
 ];
 
-const lspInitializationDelay = 20000; // 20 seconds - adjust if needed
+const lspInitializationDelay = 10000; // 10 seconds - adjust if needed
 
 suite('E2E Test Suite - Annotation Discovery', () => { // Updated suite name
 	vscode.window.showInformationMessage('[E2E] Start Annotation Discovery tests.');

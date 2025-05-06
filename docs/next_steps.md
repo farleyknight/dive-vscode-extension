@@ -2,29 +2,40 @@
 
 This document tracks the ongoing development goals, completed tasks, and immediate next steps for the VS Code extension.
 
-**Immediate Next Task: Report Discovered Endpoints in Chat**
+**Immediate Next Task: Refactor `discoverEndpoints` for Clarity and Testability**
 
-*   **Goal:** Modify the `@diagram /restEndpoint` command handler (`handleRestEndpoint` in `src/simple.ts`) to report the discovered endpoints (method and path) back to the user via the chat stream (`stream.markdown`) immediately after the `discoverEndpoints` function completes.
-*   **Why:** This provides immediate visibility into the results of the discovery phase before proceeding to disambiguation or call hierarchy, matching the desired user experience.
-*   **Steps:**
-    1.  Locate the call to `discoverEndpoints` within `handleRestEndpoint`.
-    2.  After the call returns the `EndpointInfo[]` list, check if any endpoints were found.
-    3.  If endpoints exist, format a message indicating the number found (e.g., "I found X REST endpoints:").
-    4.  Iterate through the `EndpointInfo` array.
-    5.  For each endpoint, format a string containing its `method` and `path` (e.g., \`- \`${endpoint.method} ${endpoint.path}\` in \`${path.basename(endpoint.uri.fsPath)}\`).
-    6.  Use `stream.markdown()` to send these formatted messages to the chat interface.
-    7.  Ensure this reporting happens *before* the call to `disambiguateEndpoint` and before the existing "no endpoints found" check.
-    8.  Keep the original "no endpoints found" message for cases where discovery is successful but yields no results.
-*   **Implementation Plan:**
-    1.  **Navigate** to `handleRestEndpoint` in `src/diagramParticipant.ts`.
-    2.  **Locate** the line: `const allEndpoints = await discoverEndpoints(token);`.
-    3.  **Insert** the reporting logic immediately after this line and before the subsequent cancellation check or `if (!allEndpoints || allEndpoints.length === 0)` block.
-    4.  **Add** an `if (allEndpoints && allEndpoints.length > 0)` check.
-    5.  **Inside the `if`:**
-        *   Report count: `stream.markdown(\`I found ${allEndpoints.length} REST endpoints:\`);`
-        *   Loop: `for (const endpoint of allEndpoints)`
-        *   Inside loop: `stream.markdown(\`- \`${endpoint.method} ${endpoint.path}\` in \`${path.basename(endpoint.uri.fsPath)}\`);` (Ensure `path` is imported/available).
-    6.  **Verify** the original "no endpoints found" message remains correctly placed within the `if (!allEndpoints || allEndpoints.length === 0)` block.
+*   **Goal:** Break down the complex `discoverEndpoints` function (`src/endpoint-discovery.ts`) into smaller, focused, and independently testable helper functions. This will improve maintainability and allow for reliable fixes, including the incorrect path combination bug (e.g., `/` instead of `/api/todo-statuses`).
+
+Example where we report `/` instead of `/api/todo-statuses`:
+
+```java
+@RestController
+@RequestMapping("/api/todo-statuses")
+public class TodoStatusController {
+
+    private final TodoStatusService todoStatusService;
+
+    @Autowired
+    public TodoStatusController(TodoStatusService todoStatusService) {
+        this.todoStatusService = todoStatusService;
+    }
+
+    @GetMapping
+    public ResponseEntity<List<TodoStatus>> getAllTodoStatuses() {
+        return ResponseEntity.ok(todoStatusService.findAll());
+    }
+```
+
+*   **Why:** The current function is too large and mixes several responsibilities (file finding, symbol parsing, annotation parsing, path combination), making it difficult to test and debug effectively. Refactoring is necessary before confidently fixing bugs or adding features. The previous E2E investigation confirmed a hybrid LSP+Regex approach is viable, but the integration logic needs to be cleaner.
+*   **Plan:**
+    1.  **Analyze `discoverEndpoints` Structure:** Identify distinct logical steps (file finding, symbol processing, class annotation parsing, method annotation parsing, path combination, etc.). *(Analysis Done)*
+    2.  **Iterative Extraction:**
+        *   **Extract:** Choose a self-contained block (e.g., finding controller classes and their base paths). Extract it into a new, private helper function within `endpoint-discovery.ts`.
+        *   **Integrate:** Update `discoverEndpoints` to call the new helper.
+        *   **Verify (E2E):** Run `npm run test` *immediately* to ensure the refactoring hasn't broken existing end-to-end functionality. Fix if necessary.
+        *   **Unit Test:** Write specific unit tests in `test/suite/endpoint-discovery.test.ts` for the *newly extracted helper function*, mocking its inputs.
+    3.  **Repeat:** Continue step 2 for other logical blocks, progressively simplifying `discoverEndpoints`.
+    4.  **Address Path Combination:** Ensure the path combination logic is isolated in its own well-tested helper function (`combinePaths` likely needs refinement or verification within this process). Fix the path combination bug here, covered by specific unit tests.
 *   **Status:** *(Not Started)*
 
 ---

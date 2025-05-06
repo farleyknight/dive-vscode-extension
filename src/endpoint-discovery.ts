@@ -30,38 +30,49 @@ interface ParsedAnnotationInfo {
  * @returns An object containing the determined HTTP method and an array of paths, or null if no mapping annotation is found.
  */
 export function parseMappingAnnotations(text: string): ParsedAnnotationInfo | null {
-    const annotationRegex = /@([A-Za-z]+Mapping)\s*(?:\((.*?)\))?/gs; // `s` flag for dot to match newline
+    // Create a new regex instance for each call to avoid state issues with /g flag
+    const annotationRegex = new RegExp(
+        '@(Get|Post|Put|Delete|Patch|Request)Mapping\\s*(?:\\((.*?)\\))?',
+        'gs' // Global and Dotall flags
+    );
     let lastMatch: RegExpExecArray | null = null;
     let currentMatch;
 
-    // Find the *last* matching annotation in the text block
+    // Find the *last* matching annotation in the text block.
+    // This assumes the annotation immediately preceding the method/class is the relevant one.
     while ((currentMatch = annotationRegex.exec(text)) !== null) {
         lastMatch = currentMatch;
     }
 
     if (!lastMatch) {
-        // console.log(`[parseMappingAnnotations] No match found in text: "${text}"`);
-        return null; // No mapping annotation found
+        // console.log(`[parseMappingAnnotations] No specific mapping annotation found in text: "${text}"`);
+        return null; // No relevant mapping annotation found
     }
 
-    const annotationName = lastMatch[1]; // e.g., "GetMapping", "RequestMapping"
+    const annotationType = lastMatch[1]; // e.g., "Get", "Post", "Request"
+    const fullAnnotationName = `${annotationType}Mapping`; // e.g., "GetMapping", "RequestMapping"
     const attributesString = lastMatch[2]?.trim() || ''; // Content inside parentheses
 
-    // console.log(`[parseMappingAnnotations] Last match: ${annotationName}, Attrs: "${attributesString}"`);
+    // console.log(`[parseMappingAnnotations] Last match: ${fullAnnotationName}, Attrs: "${attributesString}"`);
 
     // Parse the attributes of the last found annotation
-    let result = parseAttributes(attributesString, annotationName);
+    let result = parseAttributes(attributesString, fullAnnotationName);
 
-    // Apply default GET method for RequestMapping *only if* no method was found in attributes
-    if (annotationName === 'RequestMapping' && !result.httpMethod) {
+    // Apply default GET method for RequestMapping *only if* no method was specified in its attributes
+    if (fullAnnotationName === 'RequestMapping' && !result.httpMethod) {
         // console.log(`[parseMappingAnnotations] Applying default GET for RequestMapping`);
         result.httpMethod = 'GET';
     }
 
-    // Ensure we always have a method if an annotation was found (unless parser failed badly)
+    // Ensure we always have a method if a specific mapping annotation was found
     if (!result.httpMethod) {
-        console.warn(`[parseMappingAnnotations] Could not determine HTTP method for annotation ${annotationName} with attributes "${attributesString}". Defaulting to GET.`);
-        result.httpMethod = 'GET'; // Default safety net
+         // This case should primarily happen only if parseAttributes failed unexpectedly for a specific mapping type
+        console.warn(`[parseMappingAnnotations] Could not determine HTTP method for annotation ${fullAnnotationName} with attributes "${attributesString}". Attempting fallback based on type.`);
+        result.httpMethod = getHttpMethodFromAnnotationName(fullAnnotationName); // Fallback based on annotation type
+        if (!result.httpMethod) {
+             console.error(`[parseMappingAnnotations] CRITICAL: Failed to determine HTTP method for ${fullAnnotationName}. Defaulting to GET.`);
+             result.httpMethod = 'GET'; // Final safety net
+        }
     }
 
     // console.log(`[parseMappingAnnotations] Text: "${text.substring(0, 50)}..." => Result:`, result);
@@ -205,136 +216,175 @@ function combinePaths(basePath: string, methodPath: string): string {
 }
 
 /**
+ * Represents a potential controller class found via symbols.
+ */
+interface PotentialController {
+    classSymbol: vscode.DocumentSymbol;
+    basePath: string; // Base path from class-level @RequestMapping, defaults to '/'
+    isRestController: boolean; // True if @RestController or @Controller found
+}
+
+
+/**
+ * Finds potential Spring controller classes within a document using symbols and annotation checks.
+ * @param document The text document to analyze.
+ * @param symbols The symbols found in the document.
+ * @returns An array of potential controller symbols and their base paths.
+ */
+export async function findControllerClasses(document: vscode.TextDocument, symbols: vscode.DocumentSymbol[]): Promise<PotentialController[]> {
+    const controllers: PotentialController[] = [];
+    const potentialControllerSymbols = symbols.filter(symbol => symbol.kind === vscode.SymbolKind.Class);
+
+    for (const classSymbol of potentialControllerSymbols) {
+        const classRange = classSymbol.range;
+        const classStartLine = Math.max(0, classRange.start.line - 5);
+        const classAnnotationRange = new vscode.Range(classStartLine, 0, classRange.start.line + 1, 0);
+        const classAnnotationText = document.getText(classAnnotationRange);
+
+        const isRestController = /@(RestController|Controller)/.test(classAnnotationText);
+
+        if (isRestController) {
+            const classMappingInfo = parseMappingAnnotations(classAnnotationText);
+            let basePath = '/';
+            if (classMappingInfo && classMappingInfo.paths.length > 0) {
+                basePath = normalizePath(classMappingInfo.paths[0]);
+            }
+
+            if (basePath === '' || basePath === '/') {
+                 basePath = '/';
+            }
+
+            controllers.push({ classSymbol, basePath, isRestController });
+        }
+    }
+    return controllers;
+}
+
+/**
+ * Finds endpoint information within a given controller class symbol.
+ *
+ * @param document The text document containing the class.
+ * @param classSymbol The DocumentSymbol representing the controller class.
+ * @param basePath The base path determined from class-level annotations.
+ * @param token A cancellation token.
+ * @returns An array of EndpointInfo found within the class.
+ */
+export async function findEndpointsInClass(
+    document: vscode.TextDocument,
+    classSymbol: vscode.DocumentSymbol,
+    basePath: string,
+    token: vscode.CancellationToken
+): Promise<EndpointInfo[]> {
+    const endpoints: EndpointInfo[] = [];
+    const potentialMethods = classSymbol.children.filter(symbol => symbol.kind === vscode.SymbolKind.Method);
+
+    // Sort methods by start line to process them in order for correct annotation range calculation
+    potentialMethods.sort((a, b) => a.range.start.line - b.range.start.line);
+
+    for (let i = 0; i < potentialMethods.length; i++) {
+        const methodSymbol = potentialMethods[i];
+        if (token.isCancellationRequested) break;
+
+        const methodRange = methodSymbol.selectionRange; // More precise range for the method name/signature
+
+        // Determine the range for annotations *specific* to this method.
+        let annotationStartLine: number;
+        if (i > 0) {
+            annotationStartLine = potentialMethods[i - 1].range.end.line + 1;
+        } else {
+            annotationStartLine = classSymbol.range.start.line + 1;
+        }
+        annotationStartLine = Math.min(annotationStartLine, methodRange.start.line);
+        const annotationEndLine = methodRange.start.line;
+
+        let methodAnnotationText = '';
+        if (annotationStartLine <= annotationEndLine) {
+            const methodAnnotationRange = new vscode.Range(
+                annotationStartLine, 0,
+                annotationEndLine + 1, 0
+            );
+            methodAnnotationText = document.getText(methodAnnotationRange).trimEnd();
+        }
+
+        // Parse annotations like @GetMapping, @PostMapping etc. for this method
+        const methodMappingInfo = parseMappingAnnotations(methodAnnotationText);
+
+        if (methodMappingInfo && methodMappingInfo.httpMethod && methodMappingInfo.paths.length > 0) {
+            // Combine class base path with method paths
+            for (const methodPath of methodMappingInfo.paths) {
+                const fullPath = combinePaths(basePath, methodPath);
+                endpoints.push({
+                    method: methodMappingInfo.httpMethod,
+                    path: fullPath,
+                    uri: document.uri, // Use document URI
+                    position: methodSymbol.selectionRange.start,
+                    handlerMethodName: methodSymbol.name,
+                });
+            }
+        }
+    }
+    return endpoints;
+}
+
+/**
+ * Processes a single Java file URI to find REST endpoints.
+ *
+ * @param uri The URI of the Java file.
+ * @param token A cancellation token.
+ * @returns A promise resolving to an array of EndpointInfo found in the file.
+ */
+async function processJavaFileForEndpoints(uri: vscode.Uri, token: vscode.CancellationToken): Promise<EndpointInfo[]> {
+    let fileEndpoints: EndpointInfo[] = [];
+    try {
+        const document = await vscode.workspace.openTextDocument(uri);
+        if (!document) return [];
+
+        const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri);
+        if (!symbols) return [];
+
+        // Find controller classes and their base paths using the helper
+        const controllerClasses = await findControllerClasses(document, symbols);
+
+        // Iterate through the identified controller classes and find endpoints within each
+        for (const { classSymbol, basePath, isRestController } of controllerClasses) {
+             if (!isRestController || token.isCancellationRequested) continue;
+
+            // Find endpoints within this specific class using the helper
+            const classEndpoints = await findEndpointsInClass(document, classSymbol, basePath, token);
+            fileEndpoints = fileEndpoints.concat(classEndpoints);
+
+            if (token.isCancellationRequested) break; // Check cancellation after processing a class
+        }
+    } catch (error) {
+        console.error(`[processJavaFileForEndpoints] Error processing file ${uri.fsPath}:`, error);
+        // Optionally add user-facing error reporting here or re-throw
+    }
+    return fileEndpoints;
+}
+
+/**
  * Searches the workspace for potential Spring Boot REST endpoints using LSP symbols and text parsing.
  */
 export async function discoverEndpoints(token: vscode.CancellationToken): Promise<EndpointInfo[]> {
-    const endpoints: EndpointInfo[] = [];
+    let allEndpoints: EndpointInfo[] = [];
     const javaFiles = await vscode.workspace.findFiles('**/*.java', '**/node_modules/**', undefined, token);
-    const decoder = new TextDecoder('utf-8');
 
     console.log(`[discoverEndpoints] Found ${javaFiles.length} Java files.`);
 
+    // Process files in parallel?
+    // Consider using Promise.all for potentially faster discovery, but manage cancellation.
+    // For simplicity now, process sequentially.
     for (const uri of javaFiles) {
         if (token.isCancellationRequested) {
             console.log('[discoverEndpoints] Cancellation requested.');
             break;
         }
-
-        try {
-            const document = await vscode.workspace.openTextDocument(uri);
-            if (!document) continue;
-
-            console.log(`[discoverEndpoints] Processing: ${uri.fsPath}`);
-
-            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-                'vscode.executeDocumentSymbolProvider',
-                uri
-            );
-
-            if (!symbols) {
-                console.log(`[discoverEndpoints] No symbols found for: ${uri.fsPath}`);
-                continue;
-            }
-
-            // Find top-level classes (potential controllers)
-            const potentialControllers = symbols.filter(symbol => symbol.kind === vscode.SymbolKind.Class);
-
-            for (const classSymbol of potentialControllers) {
-                if (token.isCancellationRequested) break;
-
-                const classRange = classSymbol.range;
-                // Get text around the class definition to check for @RestController/@Controller
-                // Expand range slightly to catch annotations just before the class line
-                const classStartLine = Math.max(0, classRange.start.line - 5); // Look back 5 lines
-                const classAnnotationRange = new vscode.Range(classStartLine, 0, classRange.start.line + 1, 0);
-                const classAnnotationText = document.getText(classAnnotationRange);
-
-                // Check if it's a likely controller
-                if (!classAnnotationText.includes('@RestController') && !classAnnotationText.includes('@Controller')) {
-                    continue;
-                }
-
-                 // Try to parse class-level RequestMapping for base path
-                const classMappingInfo = parseMappingAnnotations(classAnnotationText);
-                const basePath = normalizePath(classMappingInfo?.paths?.[0] || ''); // Use first path if multiple
-
-                // Find methods within this class
-                const methods = classSymbol.children.filter(symbol => symbol.kind === vscode.SymbolKind.Method);
-
-                for (let i = 0; i < methods.length; i++) {
-                    const methodSymbol = methods[i];
-                    if (token.isCancellationRequested) break;
-
-                    const methodRange = methodSymbol.selectionRange; // Use selectionRange for more accuracy
-
-                    // Refined Range Logic:
-                    // Start looking for annotations from the end of the previous symbol (or class start)
-                    // up to the start of the current method symbol.
-                    let annotationStartLine: number;
-                    if (i > 0) {
-                        // Start after the previous method symbol ends
-                        annotationStartLine = methods[i-1].range.end.line + 1;
-                    } else {
-                        // Start after the class definition line (or slightly before to catch annotations)
-                        annotationStartLine = Math.max(0, classSymbol.selectionRange.start.line - 5); // Look back from class start for the first method
-                    }
-                    // Ensure start is not after the method itself
-                    annotationStartLine = Math.min(annotationStartLine, methodRange.start.line);
-
-                    // End the search range just before the method declaration line
-                    const annotationEndLine = methodRange.start.line + 1; // Include the line where the method starts
-
-                    // Ensure range is valid
-                    if (annotationStartLine >= annotationEndLine) {
-                         console.warn(`[discoverEndpoints] Invalid annotation range calculation for method ${methodSymbol.name}. Skipping annotations.`);
-                         continue; // Skip if range is invalid
-                    }
-
-                    const annotationRange = new vscode.Range(annotationStartLine, 0, annotationEndLine, 0);
-                    const annotationText = document.getText(annotationRange);
-
-                    // Debugging log for the text being parsed for annotations
-                    // console.log(`[discoverEndpoints] Parsing annotations for ${methodSymbol.name} in range L${annotationStartLine+1}-L${annotationEndLine+1}:\n---\n${annotationText}\n---`);
-
-                    const mappingInfo = parseMappingAnnotations(annotationText);
-
-                    // CRITICAL FIX: Only proceed if a valid mapping annotation WAS found for the METHOD
-                    if (!mappingInfo || !mappingInfo.httpMethod) {
-                        // console.log(`[discoverEndpoints] No valid mapping found for method: ${methodSymbol.name}`);
-                        continue; // Skip methods without explicit REST mapping annotations
-                    }
-
-                    // Iterate through all paths defined in the method annotation
-                    for (const methodPathSegment of mappingInfo.paths) {
-                        if (token.isCancellationRequested) break;
-
-                        // Combine base path and this specific method path segment
-                        const methodPath = normalizePath(methodPathSegment || '');
-                        const fullPath = combinePaths(basePath, methodPath);
-
-                        console.log(`[discoverEndpoints] Found: ${mappingInfo.httpMethod} ${fullPath} in ${uri.fsPath} (Class: ${classSymbol.name}, Method: ${methodSymbol.name})`);
-
-                        endpoints.push({
-                            method: mappingInfo.httpMethod,
-                            path: fullPath, // Use combined path
-                            uri: uri,
-                            position: methodSymbol.selectionRange.start, // Position of method name
-                            handlerMethodName: methodSymbol.name
-                            // TODO: Add description parsing from Javadoc/comments if needed
-                        });
-                    }
-                    if (token.isCancellationRequested) break; // Break outer loop if cancelled in inner
-                }
-            }
-
-        } catch (error) {
-            console.error(`[discoverEndpoints] Error processing file ${uri.fsPath}:`, error);
-            vscode.window.showWarningMessage(`Failed to process Java file for endpoints: ${uri.fsPath}. See console for details.`);
-        }
+        const fileEndpoints = await processJavaFileForEndpoints(uri, token);
+        allEndpoints = allEndpoints.concat(fileEndpoints);
     }
 
-    console.log(`[discoverEndpoints] Discovery finished. Found ${endpoints.length} endpoints.`);
-    return endpoints;
+    console.log(`[discoverEndpoints] Discovered ${allEndpoints.length} endpoints.`);
+    return allEndpoints;
 }
 
 /**

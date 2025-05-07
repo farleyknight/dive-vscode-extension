@@ -41,4 +41,26 @@ public class TestController {
     public String handleMultiMethod() {
         return "Handled multi-method request";
     }
+
+    // New public method calling a private helper
+    @GetMapping("/complexhello")
+    public String complexHello() {
+        return privateHelperHello();
+    }
+
+    private String privateHelperHello() {
+        // You could add more logic here, or even another private call for deeper hierarchies
+        return "Hello from private helper!";
+    }
+
+    // Service field (could be @Autowired in a real app)
+    private TestService testService = new TestService();
+
+    @GetMapping("/fullcomplexhello")
+    public String fullComplexHello() {
+        String privateData = privateHelperHello();
+        String serviceData = testService.getServiceData();
+        // int listSize = testService.getListSize(); // Temporarily commented out
+        return privateData + " | " + serviceData; // + " | List size: " + listSize;
+    }
 }

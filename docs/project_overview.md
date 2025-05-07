@@ -1,4 +1,4 @@
-# Current State
+# Project Overview
 
 ## Core Functionality
 

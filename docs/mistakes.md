@@ -15,3 +15,18 @@ This document lists patterns and practices we have identified as counter-product
         *   Use `stream.markdown()` to present the options or ask the clarifying question clearly within the chat response.
         *   The assistant's turn should end, allowing the user to respond naturally in the chat input.
         *   The assistant should be prepared to handle the user's clarifying response in their next turn.
+
+3.  **Overly Complex Regex in Mocks for Dynamic Content Parsing:**
+    *   **Mistake:** Using intricate regular expressions within mock implementations (e.g., for `vscode.lm.sendRequest`) to parse dynamically generated content (like a formatted list of options) to simulate a choice.
+    *   **Why it's Bad:** Regexes can become very difficult to write correctly for complex, multi-line structured text, especially when dealing with escaping special characters and ensuring they are robust to minor formatting changes. Debugging these regexes when they fail can be extremely time-consuming, as the exact string content and regex engine behavior can have subtle interactions. This was observed in an E2E test where a regex failed to extract an index from a formatted prompt, despite appearing correct visually.
+    *   **Correction:** When a mock needs to find specific information within a dynamic string it receives (e.g., a prompt constructed by the system under test), consider using procedural, line-by-line string parsing instead of a single complex regex. This involves:
+        *   Splitting the content into lines.
+        *   Iterating through lines and using simple string equality checks (`===`), `startsWith()`, `includes()`, or very simple regexes for specific small parts (like extracting digits).
+        *   Checking preceding/succeeding lines based on known structural patterns.
+    *   **Benefit:** While potentially more verbose, this approach makes the parsing logic explicit, step-by-step, and much easier to debug. It avoids the "black box" nature of a failing complex regex. This change successfully resolved an E2E test failure where a regex could not reliably parse a list of endpoints to simulate an LLM's selection.
+    *   **Note:** This doesn't mean "never use regex in mocks," but rather to be wary when the regex becomes a significant point of failure or complexity for parsing structured text that the mock itself didn't generate.
+
+4.  **Generating Overly Detailed Sequence Diagrams from Call Hierarchy:**
+    *   **Mistake:** Directly translating the raw output of VS Code's Call Hierarchy feature (especially when it includes deep framework/library calls) into a sequence diagram without abstraction.
+    *   **Why it's Bad:** Results in excessively complex and verbose diagrams that obscure the essential architectural interactions. Users are forced to wade through numerous internal framework calls (e.g., Spring `ResponseEntity` construction, `Assert` utilities, `HttpHeaders` manipulations) to find the core application logic flow. This makes the diagrams difficult to understand and less useful for gaining a quick architectural overview. See `docs/example-detailed-sequence-diagram.md` for a concrete example.
+    *   **Correction:** Implement an abstraction layer or filtering mechanism that processes the raw call hierarchy data. This mechanism should prioritize calls between components within the user's own project (identifiable via `vscode.workspace.workspaceFolders`) and aggressively filter out or simplify calls to external libraries and frameworks. The goal is to produce a high-level architectural view, as outlined in `docs/next_steps.md` under the current top priority.

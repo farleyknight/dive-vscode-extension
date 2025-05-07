@@ -86,7 +86,7 @@ function buildDiagramRecursive(
  * @param item The CallHierarchyItem.
  * @returns A string suitable for use as a participant name.
  */
-function getParticipantName(item: vscode.CallHierarchyItem): string {
+export function getParticipantName(item: vscode.CallHierarchyItem): string {
     // vscode.SymbolKind.Class = 4, vscode.SymbolKind.Interface = 10 (for item.kind)
     // item.detail often contains the class name or module path.
     // Example: item.name = "myMethod", item.detail = "com.example.MyClass"
@@ -127,7 +127,7 @@ function getParticipantName(item: vscode.CallHierarchyItem): string {
  * @param name The raw name.
  * @returns A sanitized name.
  */
-function sanitizeParticipantName(name: string): string {
+export function sanitizeParticipantName(name: string): string {
     // Replace spaces, dots, colons, parentheses, brackets with underscores
     // Remove or replace other characters as needed.
     // Mermaid also allows quoting: participant "Name with spaces"
@@ -150,7 +150,7 @@ function sanitizeParticipantName(name: string): string {
  * @param message The message string.
  * @returns An escaped string suitable for display in a Mermaid diagram.
  */
-function escapeMermaidMessage(message: string): string {
+export function escapeMermaidMessage(message: string): string {
     // According to Mermaid docs, for messages (text on arrows), most things are fine.
     // However, a colon `:` can be problematic if not intended as a message separator.
     // Using HTML entity `#58;` for colon is a common workaround.

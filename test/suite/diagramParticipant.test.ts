@@ -13,6 +13,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
     let mockStream: any;
     let mockLogger: any;
     let mockLm: any;
+    let mockLmAdapter: any;
     let mockToken: vscode.CancellationToken;
     let mockExtensionContext: vscode.ExtensionContext;
     let mockContext: vscode.ChatContext;
@@ -71,6 +72,9 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         mockLm = {
             sendRequest: sandbox.stub(),
         };
+        mockLmAdapter = {
+            sendRequest: sandbox.stub(),
+        };
         mockToken = {
             isCancellationRequested: false,
             onCancellationRequested: sandbox.stub().returns({ dispose: () => {} }),
@@ -90,7 +94,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
 
     test('should handle no endpoints found by discoverEndpoints', async () => {
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([]);
-        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lm: mockLm };
+        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'show test endpoint');
         assert.ok((endpointDiscovery.discoverEndpoints as sinon.SinonStub).calledOnce, 'discoverEndpoints should be called');
         assert.ok(buildCallHierarchyTreeStub.notCalled, 'buildCallHierarchyTree should not be called if no endpoints');
@@ -104,7 +108,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         const anEndpoint: EndpointInfo = { uri: fakeUri, position: fakePosition, path: '/api/some', method: 'GET', handlerMethodName: 'getSome', startLine: 9, endLine: 15 };
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([anEndpoint]);
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(undefined);
-        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lm: mockLm };
+        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'show a very ambiguous endpoint');
         assert.ok((endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).calledOnce, 'disambiguateEndpoint should be called');
         assert.ok(buildCallHierarchyTreeStub.notCalled, 'buildCallHierarchyTree should not be called if disambiguation fails');
@@ -129,7 +133,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         // Since we can't easily stub it from outside, we're testing the path where it *would* succeed.
         // For this test, the critical check is that createWebviewPanel is called.
 
-        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lm: mockLm };
+        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnceWith(fakeUri, fakePosition, mockLogger, mockToken), 'buildCallHierarchyTree should be called with correct args');
@@ -157,7 +161,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(targetEndpoint);
         buildCallHierarchyTreeStub.resolves(null);
 
-        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lm: mockLm };
+        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnce, 'buildCallHierarchyTree should be called');
@@ -182,7 +186,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
             return null; // or a specific response if cancellation has one
         });
 
-        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lm: mockLm };
+        const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnce, 'buildCallHierarchyTree should be called');

@@ -185,7 +185,7 @@ suite('disambiguateEndpoint Suite', () => {
         test('LLM successfully selects an endpoint', async () => {
             console.log("\n--- Running Test: LLM successfully selects an endpoint ---"); // DEBUG
             mockLm.sendRequest.resolves({
-                stream: (async function*() { yield "0"; })() // Directly yield the string "0"
+                stream: (async function*() { yield { type: 'text', value: "0" }; })() // Yield an object matching LanguageModelAdapterResponsePart
             });
             const result = await disambiguateEndpoint(genericQueryForLlm, endpointsForLlmTest, mockStream as any, mockToken, mockLm as any, mockLogger as any);
             console.log("[Test Log] Result received:", result ? { path: result.path, method: result.method } : null); // DEBUG
@@ -200,7 +200,7 @@ suite('disambiguateEndpoint Suite', () => {
         test('LLM responds with "None", proceeds to chat clarification', async () => {
             console.log("\n--- Running Test: LLM responds with \"None\" ---"); // DEBUG
             mockLm.sendRequest.resolves({
-                stream: (async function*() { yield "None"; })() // Correctly yield the string "None"
+                stream: (async function*() { yield { type: 'text', value: "None" }; })() // Correctly yield the object for "None"
             });
             const result = await disambiguateEndpoint(genericQueryForLlm, endpointsForLlmTest, mockStream as any, mockToken, mockLm as any, mockLogger as any);
             console.log("[Test Log] Result received:", result ? { path: result.path, method: result.method } : null); // DEBUG
@@ -221,7 +221,7 @@ suite('disambiguateEndpoint Suite', () => {
         test('LLM responds with invalid index, proceeds to chat clarification', async () => {
             console.log("\n--- Running Test: LLM responds with invalid index ---"); // DEBUG
             mockLm.sendRequest.resolves({
-                stream: (async function*() { yield "invalid_text_index"; })() // Yield a non-numeric string
+                stream: (async function*() { yield { type: 'text', value: "invalid_text_index" }; })() // Yield an object
             });
             const result = await disambiguateEndpoint(genericQueryForLlm, endpointsForLlmTest, mockStream as any, mockToken, mockLm as any, mockLogger as any);
             console.log("[Test Log] Result received:", result ? { path: result.path, method: result.method } : null); // DEBUG
@@ -266,7 +266,7 @@ suite('disambiguateEndpoint Suite', () => {
             console.log("\n--- Running Test: Fallback - heuristics multiple, LLM None ---"); // DEBUG
             if (showQuickPickStub) { } // This check is mainly for type safety if stub is conditional
             const queryCausesMultipleHeuristics = "users";
-            mockLm.sendRequest.resolves({ stream: (async function*() { yield "None"; })() });
+            mockLm.sendRequest.resolves({ stream: (async function*() { yield { type: 'text', value: "None" }; })() }); // Yield object
             const result = await disambiguateEndpoint(queryCausesMultipleHeuristics, sampleEndpoints, mockStream as any, mockToken, mockLm as any, mockLogger as any);
             console.log("[Test Log] Result received:", result ? { path: result.path, method: result.method } : null); // DEBUG
             const logCalls = mockLogger.logUsage.getCalls(); // Get calls for manual check

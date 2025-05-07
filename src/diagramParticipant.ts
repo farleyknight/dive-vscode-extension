@@ -9,6 +9,8 @@ import { EndpointInfo, discoverEndpoints } from './endpoint-discovery'; // Corre
 import { disambiguateEndpoint } from './endpoint-disambiguation'; // Corrected: disambiguateEndpoint from here
 import { buildCallHierarchyTree, CustomHierarchyNode } from './call-hierarchy'; // Import from new module
 import { generateMermaidSequenceDiagram } from '../src/mermaid-sequence-translator'; // Added import
+import { ILanguageModelAdapter } from './llm/iLanguageModelAdapter'; // Added for lmAdapter
+import { VscodeLanguageModelAdapter } from './llm/vscodeLanguageModelAdapter'; // Added for instantiating
 // Removed import for MermaidService as it's unused.
 // Removed import for TelemetryService and related types as they are unused.
 // Removed import for Logger as vscode.TelemetryLogger is used.
@@ -34,7 +36,8 @@ interface CommandHandlerParams {
     extensionContext: vscode.ExtensionContext;
     logger: vscode.TelemetryLogger;
     codeContext: string;
-    lm: vscode.LanguageModelChat;
+    lm?: vscode.LanguageModelChat; // Kept for existing commands using request.model directly
+    lmAdapter?: ILanguageModelAdapter; // Added for commands using the adapter
 }
 
 // Helper function to generate Mermaid syntax from code via LLM and display it
@@ -233,6 +236,11 @@ Please generate only the Mermaid diagram syntax representing these relationships
 	// 2. Send Request to LLM
 	let response: vscode.LanguageModelChatResponse | undefined;
 	try {
+        if (!params.lm) { // Guard against missing lm if called incorrectly
+            params.stream.markdown('Error: Language model (lm) not available for handleRelationUML.');
+            params.logger.logError(new Error('params.lm is undefined in handleRelationUML'), { kind: 'relationUML' });
+            return { metadata: { command: 'relationUML' } };
+        }
 		response = await params.lm.sendRequest(promptMessages, {}, params.token);
 	} catch (err: any) {
 		params.logger.logUsage('request', { kind: 'relationUML', status: 'llm_error', error: err });
@@ -355,94 +363,102 @@ Please generate a Mermaid sequence diagram (\`sequenceDiagram\`) showing the cal
 
 // Handler for /restEndpoint command
 export async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
-    const { stream, token, logger, extensionContext } = params; // Added extensionContext for potential use in buildCallHierarchyTree if stream is passed
-    logger.logUsage('request', { kind: 'restEndpoint', status: 'started', query: naturalLanguageQuery });
+    params.logger.logUsage('request', { kind: 'restEndpoint', status: 'started', query: naturalLanguageQuery });
     const startTime = Date.now();
+    const { stream, token, extensionContext, logger, lmAdapter } = params; // Destructure lmAdapter
 
-    try {
-        stream.progress("Discovering REST endpoints...");
-        const allEndpoints = await discoverEndpoints(token);
-
-        if (allEndpoints && allEndpoints.length > 0) {
-            let message = `I found ${allEndpoints.length} REST endpoints:\n\n`;
-            for (const ep of allEndpoints) {
-                const fileName = path.basename(ep.uri.fsPath);
-                message += `- ${ep.method} ${ep.path} in ${fileName} (lines ${ep.startLine + 1}-${ep.endLine + 1})\n`;
-            }
-            stream.markdown(message);
-        }
-
-        if (token.isCancellationRequested) {
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
-            return { metadata: { command: 'restEndpoint' } };
-        }
-
-        if (!allEndpoints || allEndpoints.length === 0) {
-             if (allEndpoints && allEndpoints.length === 0) {
-                stream.markdown("I couldn't find any REST endpoints in this workspace.");
-            }
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'no_endpoints_found', duration: Date.now() - startTime });
-            return { metadata: { command: 'restEndpoint' } };
-        }
-
-        stream.progress(`Found ${allEndpoints.length} endpoints. Identifying target...`);
-
-        const targetEndpoint = await disambiguateEndpoint(
-            naturalLanguageQuery,
-            allEndpoints,
-            stream,
-            token,
-            params.lm,
-            params.logger
-        );
-
-        if (token.isCancellationRequested) {
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
-            return { metadata: { command: 'restEndpoint' } };
-        }
-
-        if (!targetEndpoint) {
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'disambiguation_failed', duration: Date.now() - startTime });
-            return { metadata: { command: 'restEndpoint' } };
-        }
-
-        stream.progress(`Target endpoint identified: ${targetEndpoint.method} ${targetEndpoint.path}. Building call hierarchy data...`);
-
-        const hierarchyRoot = await buildCallHierarchyTree(targetEndpoint.uri, targetEndpoint.position, logger, token);
-
-        if (token.isCancellationRequested) {
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled_during_hierarchy_build', duration: Date.now() - startTime });
-            return { metadata: { command: 'restEndpoint' } };
-        }
-
-        if (hierarchyRoot) {
-            // stream.markdown(`Successfully built call hierarchy for ${hierarchyRoot.item.name}. Children: ${hierarchyRoot.children.length}, Parents: ${hierarchyRoot.parents.length}. (Details might be logged).`);
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_built', itemName: hierarchyRoot.item.name, duration: Date.now() - startTime });
-
-            stream.progress('Generating sequence diagram...');
-            const mermaidSyntax = generateMermaidSequenceDiagram(hierarchyRoot);
-
-            await createAndShowDiagramWebview(
-                extensionContext, // Use params.extensionContext
-                logger,           // Use params.logger
-                stream,           // Use params.stream
-                mermaidSyntax,
-                'restEndpointSequenceDiagram', // panelId
-                `Call Sequence: ${targetEndpoint.method} ${targetEndpoint.path}`.replace(/\//g, '_'), // panelTitle, sanitize slashes
-                'restEndpoint', // commandName for logging
-                `call_sequence_${targetEndpoint.handlerMethodName}` // exportFileNameBase
-            );
-
-        } else {
-            stream.markdown(`Could not build call hierarchy data for ${targetEndpoint.method} ${targetEndpoint.path}.`);
-            logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_build_failed', duration: Date.now() - startTime });
-        }
-
-    } catch (err) {
-        handleError(logger, err, stream);
-        logger.logUsage('request', { kind: 'restEndpoint', status: 'error', duration: Date.now() - startTime, error: err instanceof Error ? err.message : String(err) });
+    if (!lmAdapter) { // Check if lmAdapter is defined
+        stream.markdown('Error: Language Model Adapter not available for /restEndpoint command.');
+        logger.logError(new Error('params.lmAdapter is undefined in handleRestEndpoint'), { kind: 'restEndpoint' });
+        return { metadata: { command: 'restEndpoint' } };
     }
 
+    stream.progress('Discovering endpoints...');
+    const allEndpoints = await discoverEndpoints(token);
+
+    if (allEndpoints && allEndpoints.length > 0) {
+        let message = `I found ${allEndpoints.length} REST endpoints:\n\n`;
+        for (const ep of allEndpoints) {
+            const fileName = path.basename(ep.uri.fsPath);
+            message += `- ${ep.method} ${ep.path} in ${fileName} (lines ${ep.startLine + 1}-${ep.endLine + 1})\n`;
+        }
+        stream.markdown(message);
+    }
+
+    if (token.isCancellationRequested) {
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
+        return { metadata: { command: 'restEndpoint' } };
+    }
+
+    if (!allEndpoints || allEndpoints.length === 0) {
+         if (allEndpoints && allEndpoints.length === 0) {
+            stream.markdown("I couldn't find any REST endpoints in this workspace.");
+        }
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'no_endpoints_found', duration: Date.now() - startTime });
+        return { metadata: { command: 'restEndpoint' } };
+    }
+
+    stream.progress(`Found ${allEndpoints.length} endpoints. Identifying target...`);
+
+    const targetEndpoint = await disambiguateEndpoint(
+        naturalLanguageQuery,
+        allEndpoints,
+        stream,
+        token,
+        lmAdapter, // Changed from params.lm to lmAdapter
+        logger
+    );
+
+    if (token.isCancellationRequested) {
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled', duration: Date.now() - startTime });
+        return { metadata: { command: 'restEndpoint' } };
+    }
+
+    if (!targetEndpoint) {
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'disambiguation_failed', duration: Date.now() - startTime });
+        return { metadata: { command: 'restEndpoint' } };
+    }
+
+    stream.progress(`Target endpoint identified: ${targetEndpoint.method} ${targetEndpoint.path}. Building call hierarchy data...`);
+
+    const hierarchyRoot = await buildCallHierarchyTree(targetEndpoint.uri, targetEndpoint.position, logger, token);
+
+    if (token.isCancellationRequested) {
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'cancelled_during_hierarchy_build', duration: Date.now() - startTime });
+        return { metadata: { command: 'restEndpoint' } };
+    }
+
+    if (hierarchyRoot) {
+        // stream.markdown(`Successfully built call hierarchy for ${hierarchyRoot.item.name}. Children: ${hierarchyRoot.children.length}, Parents: ${hierarchyRoot.parents.length}. (Details might be logged).`);
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_built', itemName: hierarchyRoot.item.name, duration: Date.now() - startTime });
+
+        stream.progress('Generating sequence diagram...');
+        logger.logUsage('debug', { point: 'handleRestEndpoint.beforeGenerateMermaidSequenceDiagram' }); // DEBUG
+        const mermaidSyntax = generateMermaidSequenceDiagram(hierarchyRoot);
+        logger.logUsage('debug', { point: 'handleRestEndpoint.afterGenerateMermaidSequenceDiagram', syntaxLength: mermaidSyntax?.length }); // DEBUG
+        // Always log the full syntax to the console for detailed debugging if needed.
+        console.log(`[handleRestEndpoint] Full Mermaid Syntax (length: ${mermaidSyntax?.length}):\n${mermaidSyntax}`); // DEBUG CONSOLE
+
+        logger.logUsage('debug', { point: 'handleRestEndpoint.beforeCreateAndShowDiagramWebview' }); // DEBUG
+        await createAndShowDiagramWebview(
+            extensionContext, // Use params.extensionContext
+            logger,           // Use params.logger
+            stream,           // Use params.stream
+            mermaidSyntax,
+            'restEndpointSequenceDiagram', // panelId
+            `Call Sequence: ${targetEndpoint.method} ${targetEndpoint.path}`.replace(/\//g, '_'), // panelTitle, sanitize slashes
+            'restEndpoint', // commandName for logging
+            `call_sequence_${targetEndpoint.handlerMethodName}` // exportFileNameBase
+        );
+
+    } else {
+        stream.markdown(`Could not build call hierarchy data for ${targetEndpoint.method} ${targetEndpoint.path}.`);
+        logger.logUsage('request', { kind: 'restEndpoint', status: 'call_hierarchy_data_build_failed', duration: Date.now() - startTime });
+        logger.logUsage('debug', { point: 'handleRestEndpoint.hierarchyRootNull' }); // DEBUG
+    }
+
+    logger.logUsage('request', { kind: 'restEndpoint', status: 'processed_ok', duration: Date.now() - startTime });
+    logger.logUsage('debug', { point: 'handleRestEndpoint.end' }); // DEBUG
     return { metadata: { command: 'restEndpoint' } };
 }
 
@@ -457,9 +473,11 @@ async function createAndShowDiagramWebview(
     commandName: string, // For logging context
     exportFileNameBase?: string // Optional base filename for export
 ): Promise<boolean> { // Returns true if successful, false otherwise
+    logger.logUsage('debug', { point: 'createAndShowDiagramWebview.start', syntaxLength: mermaidSyntax?.length }); // DEBUG
 
     // Validate the syntax first
     const isValid = await validateMermaidSyntax(mermaidSyntax, stream, logger, commandName);
+    logger.logUsage('debug', { point: 'createAndShowDiagramWebview.afterValidate', isValid }); // DEBUG
     if (!isValid) {
         // Validation failed, message already sent by validator
         return false;
@@ -588,6 +606,7 @@ async function validateMermaidSyntax(
     logger: vscode.TelemetryLogger,
     commandName: string // Added for better logging
 ): Promise<boolean> {
+    logger.logUsage('debug', { point: 'validateMermaidSyntax.start', syntaxLength: syntax?.length }); // DEBUG
     // Keep track of original global properties to restore them
     const originalWindow = global.window;
     const originalDocument = global.document;
@@ -598,42 +617,56 @@ async function validateMermaidSyntax(
 
     try {
         // 1. Create a JSDOM instance
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.beforeJSDOM' }); // DEBUG
         const dom = new JSDOM('');
         const { window } = dom;
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.afterJSDOM' }); // DEBUG
 
         // 2. Create and attach DOMPurify to the JSDOM window
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.beforeDOMPurify' }); // DEBUG
         const purify = createDOMPurify(window as any); // Cast window to any for DOMPurify compatibility
         (window as any).DOMPurify = purify;
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.afterDOMPurify' }); // DEBUG
 
         // 3. Make JSDOM environment global (temporarily)
         // Mermaid expects certain global properties
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.beforeSetGlobals' }); // DEBUG
         (global as any).window = window;
         (global as any).document = window.document;
         (global as any).navigator = window.navigator;
         (global as any).HTMLElement = window.HTMLElement;
         (global as any).Element = window.Element;
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.afterSetGlobals' }); // DEBUG
 
 
         // 4. Dynamically import Mermaid - it should now find the global JSDOM/DOMPurify
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.beforeImportMermaid' }); // DEBUG
         const mermaid = await import('mermaid');
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.afterImportMermaid' }); // DEBUG
 
         // 5. Initialize and Parse
         // We might need to initialize explicitly within this simulated env
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.beforeInitialize' }); // DEBUG
         await mermaid.default.initialize({
             startOnLoad: false,
             // Potentially set theme/config if parse depends on it, though unlikely
              securityLevel: 'loose' // Keep loose for consistency
         });
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.afterInitialize' }); // DEBUG
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.beforeParse' }); // DEBUG
         await mermaid.default.parse(syntax);
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.afterParse' }); // DEBUG
 
         return true;
     } catch (err: any) {
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.catchBlock', error: err?.message }); // DEBUG
         const errorMessage = err.message || String(err);
         stream.markdown(`\n**Mermaid Syntax Validation Error (Node.js):**\n\n${errorMessage}\n\nPlease check the generated syntax.`);
         logger.logError(new Error('Mermaid Syntax Error (Node.js)'), { command: commandName, error: errorMessage, syntax });
         return false;
     } finally {
         // 6. IMPORTANT: Clean up globals to avoid side effects
+        logger.logUsage('debug', { point: 'validateMermaidSyntax.finallyBlock' }); // DEBUG
         if (originalWindow) {
             (global as any).window = originalWindow;
         } else {
@@ -668,8 +701,27 @@ async function validateMermaidSyntax(
     }
 }
 
-// Default handler for unrecognized commands
+// Helper function to get code context (similar to what might have been in simple.ts)
+async function getCodeContext(logger: vscode.TelemetryLogger, token: vscode.CancellationToken): Promise<string> {
+    if (token.isCancellationRequested) { return ''; }
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        logger.logUsage('getCodeContext', { status: 'no_active_editor' });
+        return '';
+    }
+    const document = editor.document;
+    const selection = editor.selection;
+    if (selection && !selection.isEmpty) {
+        logger.logUsage('getCodeContext', { status: 'selection_present' });
+        return document.getText(selection);
+    }
+    logger.logUsage('getCodeContext', { status: 'full_document' });
+    return document.getText();
+}
+
+// Default command handler
 async function handleDefaultCommand({ stream, logger }: Pick<CommandHandlerParams, 'stream' | 'logger'>): Promise<IChatResult> {
+    logger.logUsage('request', { kind: 'default', status: 'started' });
     stream.markdown("I can help generate diagrams from code. Try selecting some code and asking me to diagram it, or use `/simpleUML`, `/relationUML`, or `/sequence`.");
     logger.logUsage('request', { kind: 'default' });
     return { metadata: { command: 'default' } };
@@ -685,169 +737,150 @@ export function registerSimpleParticipant(extensionContext: vscode.ExtensionCont
 
     // Update return type - remove ChatAgentResult as we are not manually handling tool results here
     const handler: vscode.ChatRequestHandler = async (request: vscode.ChatRequest, context: vscode.ChatContext, stream: vscode.ChatResponseStream, token: vscode.CancellationToken): Promise<IChatResult> => {
-        let codeContext = '';
-        let lm: vscode.LanguageModelChat | undefined;
+        const { command, prompt } = request;
+        const codeContext = await getCodeContext(logger, token);
 
-        try {
-            // Attempt to get the language model - Use Claude 3.5 Sonnet
-            const models = await vscode.lm.selectChatModels({ family: 'claude-3.5-sonnet' }); // Await the promise
-            lm = models[0]; // Access the first model
-            if (!lm) {
-                // Attempt to fall back to GPT-4o if Sonnet is not available
-                stream.markdown("Claude 3.5 Sonnet not found, trying GPT-4o...\n");
-                const gptModels = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
-                lm = gptModels[0];
-                if (!lm) {
-                    // If neither is found, report error
-                    stream.markdown("Unable to access a suitable language model (Claude 3.5 Sonnet or GPT-4o).\n");
-                    return { metadata: { command: request.command || 'error' } };
-                }
-            }
+        const baseParams: Omit<CommandHandlerParams, 'lm' | 'lmAdapter'> = {
+            request,
+            context,
+            stream,
+            token,
+            extensionContext,
+            logger,
+            codeContext,
+        };
 
-            // Get code context directly from the active editor
-            const editor = vscode.window.activeTextEditor;
-            if (editor) {
-                const selection = editor.selection;
-                if (!selection.isEmpty) {
-                    codeContext = editor.document.getText(selection);
-                } else {
-                    codeContext = editor.document.getText();
-                }
-            } else {
-                // Handle case where no editor is active, maybe needed for some commands?
-                // For commands requiring code, they should handle the empty codeContext gracefully.
-                logger.logUsage('request', { kind: request.command || 'unknown', status: 'no_active_editor' });
-            }
-
-            // Construct the full params object
-            const params: CommandHandlerParams = {
-                request,
-                context,
-                stream,
-                token,
-                extensionContext,
-                logger,
-                codeContext, // Include codeContext
-                lm, // Include lm
-            };
-
-            // Route to the appropriate handler based on the command
-            if (request.command === 'simpleUML') {
-                return handleSimpleUML(params);
-            } else if (request.command === 'relationUML') {
-                return handleRelationUML(params); // Pass the full params
-            } else if (request.command === 'sequence') {
-                return handleSequenceDiagram(params); // Add routing for sequence
-            } else if (request.command === 'restEndpoint') {
-                // Extract the natural language query after the command
-                // Assumes format: /restEndpoint Some natural language query
-                const naturalLanguageQuery = request.prompt.trim();
-                if (!naturalLanguageQuery) {
-                    stream.markdown('Please provide a query after the `/restEndpoint` command. For example: `/restEndpoint Show the user creation flow`');
-                    return { metadata: { command: 'restEndpoint' } };
-                } else {
-                    return handleRestEndpoint(params, naturalLanguageQuery);
-                }
-            } else {
-                // Default handler might only need stream/logger
-                return handleDefaultCommand({ stream, logger });
-            }
-        } catch (err) {
-            handleError(logger, err, stream);
-            return { metadata: { command: request.command || 'unknown_error' } };
+        if (command === 'simpleUML') {
+            return handleSimpleUML({ ...baseParams, lm: request.model });
+        } else if (command === 'relationUML') {
+            return handleRelationUML({ ...baseParams, lm: request.model });
+        } else if (command === 'sequenceDiagram') {
+            return handleSequenceDiagram({ ...baseParams, lm: request.model });
+        } else if (command === 'restEndpoint') {
+            const modelId = request.model.id; // Get modelId for the adapter
+            const adapterDisplayName = extensionContext.extension.packageJSON.displayName || "Dive Extension";
+            const lmAdapter = new VscodeLanguageModelAdapter(request.model, modelId, adapterDisplayName);
+            return handleRestEndpoint({ ...baseParams, lmAdapter }, prompt.substring(command.length + 1).trim());
+        } else if (command === 'clearChat') {
+            // This command is not typically handled by a participant but by the client UI.
+            // If it were, one might clear context or perform other cleanup.
+            // For now, acknowledge and do nothing.
+            stream.markdown("Chat context not explicitly managed by this participant.");
+            return { metadata: { command } };
+        } else {
+            // Default handler for unrecognized commands or general queries
+            return handleDefaultCommand({ ...baseParams });
         }
     };
 
-    // Chat participants appear as top-level options in the chat input
-    // when you type `@`, and can contribute sub-commands in the chat input
-    // that appear when you type `/`.
-    const participant = vscode.chat.createChatParticipant(DIAGRAM_PARTICIPANT_ID, handler);
+    // const diveParticipant = vscode.chat.createChatParticipant(DIAGRAM_PARTICIPANT_ID, handler);
+    // diveParticipant.iconPath = new vscode.ThemeIcon('symbol-keyword');
+    // diveParticipant.description = vscode.l10n.t('Generates diagrams from code or natural language, and assists with REST endpoint understanding.');
+    // diveParticipant.fullName = vscode.l10n.t('Dive Diagram & API Assistant');
+    // diveParticipant.commandProvider = {
+    //     provideCommands(token: vscode.CancellationToken) {
+    //         return [
+    //             { name: 'simpleUML', description: 'Generate a simple UML diagram from the current file.' },
+    //             { name: 'relationUML', description: 'Generate a UML diagram showing relationships in the current file.' },
+    //             { name: 'sequenceDiagram', description: 'Generate a sequence diagram from the current file.' },
+    //             { name: 'restEndpoint', description: 'Analyze and visualize a REST endpoint. Provide a query like /restEndpoint GET /api/users' },
+    //             { name: 'clearChat', description: 'Does nothing, chat context is not managed by this participant.'}
+    //         ];
+    //     }
+    // };
+    // diveParticipant.followupProvider = {
+    //     provideFollowups(_result: IChatResult, _context: vscode.ChatContext, _token: vscode.CancellationToken) {
+    //         return [];
+    //     }
+    // };
 
-    participant.iconPath = new vscode.ThemeIcon('symbol-keyword');
-    participant.followupProvider = {
-        provideFollowups(_result: IChatResult, _context: vscode.ChatContext, _token: vscode.CancellationToken) {
-            // Logger is now accessible here
-            return [{
-                prompt: 'Create a simple UML diagram',
-                label: vscode.l10n.t('Generate Simple UML'),
-                command: 'simpleUML'
-            }, {
-                prompt: 'Show relationships between classes/objects',
-                label: vscode.l10n.t('Generate Relation UML'),
-                command: 'relationUML'
-            },{
-                prompt: 'Generate a sequence diagram',
-                label: vscode.l10n.t('Generate Sequence Diagram'),
-                command: 'sequence'
-            } satisfies vscode.ChatFollowup];
+    // Correct way to set properties for a ChatParticipant is often on the handler itself or options
+    const participantHandler: vscode.ChatRequestHandler = Object.assign(handler, {
+        description: vscode.l10n.t('Generates diagrams from code or natural language, and assists with REST endpoint understanding.'),
+        fullName: vscode.l10n.t('Dive Diagram & API Assistant'),
+        commandProvider: {
+            provideCommands(token: vscode.CancellationToken): vscode.ProviderResult<vscode.ChatCommand[]> {
+                return [
+                    { name: 'simpleUML', description: 'Generate a simple UML diagram from the current file.' },
+                    { name: 'relationUML', description: 'Generate a UML diagram showing relationships in the current file.' },
+                    { name: 'sequenceDiagram', description: 'Generate a sequence diagram from the current file.' },
+                    { name: 'restEndpoint', description: 'Analyze and visualize a REST endpoint. Provide a query like /restEndpoint GET /api/users' },
+                    { name: 'clearChat', description: 'Does nothing, chat context is not managed by this participant.'}
+                ];
+            }
+        },
+        followupProvider: {
+            provideFollowups(_result: IChatResult, _context: vscode.ChatContext, _token: vscode.CancellationToken): vscode.ProviderResult<vscode.ChatFollowup[]> {
+                return [];
+            }
         }
-    };
+    });
 
-    extensionContext.subscriptions.push(participant.onDidReceiveFeedback((feedback: vscode.ChatResultFeedback) => {
-        // Log chat result feedback - logger is accessible here
-        logger.logUsage('chatResultFeedback', {
-            kind: feedback.kind
-        });
-    }));
+    const diveParticipant = vscode.chat.createChatParticipant(DIAGRAM_PARTICIPANT_ID, participantHandler);
+    diveParticipant.iconPath = new vscode.ThemeIcon('symbol-keyword');
 
-    // Register the command handler for the followup
-    extensionContext.subscriptions.push(
-        participant,
-        vscode.commands.registerTextEditorCommand(DIAGRAM_NAMES_COMMAND_ID, async (textEditor: vscode.TextEditor) => {
-            // Replace all variables in active editor with diagram-related names? Or keep generic?
-            const text = textEditor.document.getText();
 
-            let chatResponse: vscode.LanguageModelChatResponse | undefined;
+    extensionContext.subscriptions.push(diveParticipant);
+
+    // Register a command to get names from the editor (example, not directly used by participant commands yet)
+    const namesInEditorCommand = vscode.commands.registerCommand(DIAGRAM_NAMES_COMMAND_ID, async () => { // Added async
+        const text = vscode.window.activeTextEditor?.document.getText();
+        if (text) {
             try {
-                // Use gpt-4o since it is fast and high quality.
-                const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'gpt-4o' });
-                if (!model) {
+                const models = await vscode.lm.selectChatModels({ family: 'gpt-4o' }); // Added await
+                if (!models || models.length === 0) {
                     console.log('Model not found. Please make sure the GitHub Copilot Chat extension is installed and enabled.');
+                    vscode.window.showErrorMessage('Compatible language model not found. Please ensure GitHub Copilot Chat is active.');
                     return;
                 }
+                const model = models[0];
 
                 const messages = [
                     vscode.LanguageModelChatMessage.User(`You are an AI assistant! Think carefully and step by step.
                     Your job is to replace all variable names in the following code with diagram-related variable names. Be creative. IMPORTANT respond just with code. Do not use markdown!`),
                     vscode.LanguageModelChatMessage.User(text)
                 ];
-                chatResponse = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
 
+                const response: vscode.LanguageModelChatResponse | undefined = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token); // Added await and typed response
+
+                if (response) {
+                    const activeEditor = vscode.window.activeTextEditor;
+                    if (!activeEditor) {
+                        vscode.window.showErrorMessage('No active text editor to write the response.');
+                        return;
+                    }
+                    // Clear the editor content before inserting new content
+                    await activeEditor.edit(edit => {
+                        const document = activeEditor.document;
+                        const start = new vscode.Position(0, 0);
+                        const end = new vscode.Position(document.lineCount - 1, document.lineAt(document.lineCount - 1).text.length);
+                        edit.delete(new vscode.Range(start, end));
+                    });
+
+                    // Stream the code into the editor as it is coming in from the Language Model
+                    for await (const fragment of response.text) { // Changed to for await...of
+                        await activeEditor.edit(edit => {
+                            const document = activeEditor.document;
+                            const lastLine = document.lineAt(document.lineCount - 1);
+                            const position = new vscode.Position(lastLine.lineNumber, lastLine.text.length);
+                            edit.insert(position, fragment);
+                        });
+                    }
+                }
             } catch (err) {
                 if (err instanceof vscode.LanguageModelError) {
                     console.log(err.message, err.code, err.cause);
+                    vscode.window.showErrorMessage(`Language Model Error: ${err.message}`);
                 } else {
-                    throw err;
+                    console.error('Error in namesInEditorCommand:', err);
+                    vscode.window.showErrorMessage(`An unexpected error occurred: ${ (err instanceof Error) ? err.message : String(err)}`);
+                    // throw err; // Optionally rethrow or handle
                 }
-                return;
             }
+        }
+    });
 
-            // Clear the editor content before inserting new content
-            await textEditor.edit(edit => {
-                const start = new vscode.Position(0, 0);
-                const end = new vscode.Position(textEditor.document.lineCount - 1, textEditor.document.lineAt(textEditor.document.lineCount - 1).text.length);
-                edit.delete(new vscode.Range(start, end));
-            });
-
-            // Stream the code into the editor as it is coming in from the Language Model
-            try {
-                for await (const fragment of chatResponse.text) {
-                    await textEditor.edit(edit => {
-                        const lastLine = textEditor.document.lineAt(textEditor.document.lineCount - 1);
-                        const position = new vscode.Position(lastLine.lineNumber, lastLine.text.length);
-                        edit.insert(position, fragment);
-                    });
-                }
-            } catch (err) {
-                // async response stream may fail, e.g network interruption or server side error
-                await textEditor.edit(edit => {
-                    const lastLine = textEditor.document.lineAt(textEditor.document.lineCount - 1);
-                    const position = new vscode.Position(lastLine.lineNumber, lastLine.text.length);
-                    edit.insert(position, (err as Error).message);
-                });
-            }
-        }),
-    );
+    extensionContext.subscriptions.push(namesInEditorCommand);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

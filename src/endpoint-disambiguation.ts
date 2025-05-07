@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { basename } from 'path'; // Specifically import basename
 import { EndpointInfo } from './endpoint-discovery'; // Assuming EndpointInfo will remain in endpoint-discovery.ts or be moved to a shared types file
+import { ILanguageModelAdapter, LanguageModelAdapterChatMessage, LanguageModelAdapterChatRole } from './llm/iLanguageModelAdapter'; // Added import
 
 /**
  * Placeholder for endpoint disambiguation logic.
@@ -12,7 +13,7 @@ export async function disambiguateEndpoint(
     endpoints: EndpointInfo[],
     stream: vscode.ChatResponseStream, // stream is kept for messages, but not for quick pick
     token: vscode.CancellationToken,
-    lm: vscode.LanguageModelChat,
+    lmAdapter: ILanguageModelAdapter, // Changed from lm: vscode.LanguageModelChat
     logger: vscode.TelemetryLogger
 ): Promise<EndpointInfo | null> {
     console.log(`[disambiguateEndpoint] Entry - Query: "${query}", Endpoints: ${endpoints.length}`); // DEBUG
@@ -84,29 +85,36 @@ export async function disambiguateEndpoint(
         ).join('\n\n');
 
         const prompt = `The user provided the query: "${query}"\n\nI found the following REST API endpoints. Which one is the best match for the user's query?\n\n${endpointListForLLM}\n\nPlease respond with only the numeric index of the best matching endpoint. For example, if the best match is the first endpoint, respond with "0". If you cannot determine a single best match, respond with "None".`;
-        console.log("[disambiguateEndpoint] Sending request to LLM."); // DEBUG
-        logger.logUsage('disambiguateEndpoint', { phase: 'llm_disambiguation', status: 'sending_prompt', query, prompt_length: prompt.length, candidate_count: candidatesForLLM.length });
+        console.log("[disambiguateEndpoint] Sending request to LLM adapter."); // DEBUG
+        logger.logUsage('disambiguateEndpoint', { phase: 'llm_disambiguation', status: 'sending_prompt_adapter', query, prompt_length: prompt.length, candidate_count: candidatesForLLM.length });
 
         try {
-            const messages = [vscode.LanguageModelChatMessage.User(prompt)];
-            const chatResponse = await lm.sendRequest(messages, {}, token);
+            // Construct messages using adapter's types
+            const adapterMessages: LanguageModelAdapterChatMessage[] = [
+                { role: LanguageModelAdapterChatRole.User, content: prompt }
+            ];
+            // Call the adapter's sendRequest method
+            const adapterResponse = await lmAdapter.sendRequest(adapterMessages, undefined /* options */, token);
 
             let llmResponseText = '';
-            // Note: LM response might be streamed.
-            // It's crucial to collect the full response before parsing.
-            console.log("[disambiguateEndpoint] Starting LLM stream processing."); // DEBUG
-            for await (const fragment of chatResponse.stream) {
-                 console.log("[disambiguateEndpoint] LLM Stream fragment:", fragment); // DEBUG
-                 if (fragment instanceof vscode.LanguageModelTextPart) {
-                    llmResponseText += fragment.value;
-                 } else if (typeof fragment === 'string') { // Fallback for older/different API versions
-                    llmResponseText += fragment;
+            console.log("[disambiguateEndpoint] Starting LLM adapter stream processing."); // DEBUG
+            for await (const part of adapterResponse.stream) {
+                 console.log("[disambiguateEndpoint] LLM Adapter Stream part:", part); // DEBUG
+                 if (part.type === 'text') {
+                    llmResponseText += part.value;
+                 } else if (part.type === 'functionCall') {
+                    // This prompt does not expect function calls, log a warning if received.
+                    const warningMsg = `[disambiguateEndpoint] Unexpected functionCall part from LLM adapter: ${JSON.stringify(part)}`;
+                    console.warn(warningMsg);
+                    logger.logUsage('disambiguateEndpoint', { phase: 'llm_disambiguation', status: 'unexpected_function_call_part', query, part_name: part.name });
+                    // Depending on strictness, one might choose to ignore or error here.
+                    // For now, we'll ignore it for accumulating llmResponseText, as the prompt expects text.
                  }
             }
             llmResponseText = llmResponseText.trim();
-            console.log(`[disambiguateEndpoint] LLM Response (trimmed): "${llmResponseText}"`); // DEBUG
+            console.log(`[disambiguateEndpoint] LLM Adapter Response (trimmed): "${llmResponseText}"`); // DEBUG
 
-            logger.logUsage('disambiguateEndpoint', { phase: 'llm_disambiguation', status: 'received_response', query, llm_response: llmResponseText });
+            logger.logUsage('disambiguateEndpoint', { phase: 'llm_disambiguation', status: 'received_response_adapter', query, llm_response: llmResponseText });
 
             if (llmResponseText.toLowerCase() !== 'none') {
                 const chosenIndex = parseInt(llmResponseText, 10);

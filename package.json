@@ -19,6 +19,12 @@
 	"activationEvents": [
 		"onChatParticipant:dive.diagram"
 	],
+	"enabledApiProposals": [
+		"chatTab",
+		"chatProvider",
+		"chatParticipantPrivate",
+		"chatParticipantAdditions"
+	],
 	"contributes": {
 		"chatParticipants": [
 			{
@@ -106,6 +112,7 @@
 		"lint": "eslint",
 		"watch": "npm run clean && tsc -watch -p ./",
 		"test": "npm run compile && node ./out/test/runTest.js",
+		"launch": "npm run compile && code --extensionDevelopmentPath=$PWD --log debug",
 		"release:patch": "git fetch --tags && npm version patch && git push --follow-tags",
 		"release:minor": "git fetch --tags && npm version minor && git push --follow-tags",
 		"release:major": "git fetch --tags && npm version major && git push --follow-tags"
@@ -129,6 +136,7 @@
 		"@types/vscode": "^1.99.1",
 		"@typescript-eslint/eslint-plugin": "^8.31.1",
 		"@typescript-eslint/parser": "^8.31.1",
+		"@vscode/dts": "^0.4.1",
 		"@vscode/test-cli": "^0.0.9",
 		"@vscode/test-electron": "^2.3.9",
 		"eslint": "^9.25.1",

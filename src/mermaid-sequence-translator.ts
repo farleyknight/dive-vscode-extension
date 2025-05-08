@@ -13,6 +13,51 @@ export interface EndpointDiagramDetails {
 }
 
 /**
+ * Attempts to extract the package name from a call hierarchy item's detail.
+ * For Java, this is typically the part of the fully qualified name before the class name.
+ * @param item The call hierarchy item.
+ * @returns The package name (e.g., "com.example.testfixture") or undefined if not determinable.
+ */
+export function getPackageNameFromVscodeItem(item: ICallHierarchyItem): string | undefined {
+    if (!item.detail) {
+        return undefined;
+    }
+    // Assuming item.detail for Java classes is like "com.example.project.MyClass"
+    // or "MyClass" for default package.
+    // Or for file paths like "/path/to/file/MyClass.java"
+    const detail = item.detail;
+    const lastDotIndex = detail.lastIndexOf('.');
+    const lastSlashIndex = detail.lastIndexOf('/'); // Handle path-like details
+
+    if (lastDotIndex > -1 && lastDotIndex > lastSlashIndex) {
+        // Check if the part before the last dot looks like a package name
+        // (e.g., not just an extension like ".java")
+        const potentialPackage = detail.substring(0, lastDotIndex);
+        if (potentialPackage.includes('/') || potentialPackage.endsWith('java')) { // Heuristic for file paths
+             // If it looks more like a file path ending in .java, try to get package from a deeper structure if possible
+             // This part might need more robust parsing depending on actual item.detail format for files
+             const parts = detail.split('/');
+             if (parts.length > 1) {
+                // Attempt to find 'com', 'org', etc. or a typical java source structure
+                let javaSrcIndex = parts.indexOf('java');
+                if (javaSrcIndex !== -1 && javaSrcIndex < parts.length -1) {
+                    return parts.slice(javaSrcIndex + 1, parts.length -1).join('.');
+                }
+             }
+             return undefined; // Fallback if it's a path but package can't be extracted
+        }
+        // Assuming it's a qualified class name
+        if (potentialPackage.toLowerCase() === 'java') return 'java'; // e.g. java.util.List
+        if (potentialPackage.startsWith('java.') || potentialPackage.startsWith('javax.')) return potentialPackage.split('.').slice(0, 2).join('.'); // "java.util" or "javax.swing"
+        return potentialPackage;
+    } else if (lastDotIndex === -1 && lastSlashIndex === -1 && detail && !detail.includes(' ')) {
+        // No dots or slashes, could be a class in the default package or a simple name
+        return ""; // Represent default package as empty string
+    }
+    return undefined; // Cannot determine package
+}
+
+/**
  * Generates a Mermaid sequence diagram string from a call hierarchy tree.
  *
  * @param rootNode The root of the call hierarchy tree (CustomHierarchyNode).
@@ -41,6 +86,23 @@ export function generateMermaidSequenceDiagram(
 
     const abstractRootItem = fromVscodeCallHierarchyItem(rootNode.item);
 
+    // Determine project packages to include based on the root node's package
+    let projectPackagesToInclude: string[] | undefined = undefined;
+    const rootPackageName = getPackageNameFromVscodeItem(abstractRootItem);
+
+    if (rootPackageName !== undefined && !['java', 'javax', 'org.springframework'].some(p => rootPackageName.startsWith(p))) {
+        // Only set projectPackagesToInclude if the root itself is not a common library
+        // and its package is determined.
+        projectPackagesToInclude = [rootPackageName];
+        // If root is in default package, only include other default package items explicitly
+        // For "com.example", include "com.example" and "com.example.subpackage"
+        console.log(`[MermaidGenerator] Root package identified as: ${rootPackageName}. Filtering to this and sub-packages.`);
+    } else if (rootPackageName !== undefined) {
+        console.log(`[MermaidGenerator] Root package is a library or common package: ${rootPackageName}. No specific project filtering applied based on root.`);
+    } else {
+        console.log(`[MermaidGenerator] Root package could not be determined. No project filtering applied.`);
+    }
+
     if (endpointDetails) {
         const clientParticipant = addParticipant('Client');
 
@@ -66,7 +128,7 @@ export function generateMermaidSequenceDiagram(
         if (!rootNode.children || rootNode.children.length === 0) {
             lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
         } else {
-            buildDiagramRecursive(rootNode, controllerParticipant, lines, addParticipant, 0);
+            buildDiagramRecursive(rootNode, controllerParticipant, lines, addParticipant, 0, projectPackagesToInclude);
 
             // After all recursive calls, add the final response from the controller to the client.
             lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
@@ -75,7 +137,7 @@ export function generateMermaidSequenceDiagram(
         // Original logic for non-endpoint call hierarchies
         const rootParticipantDisplayName = getParticipantName(abstractRootItem); // Will use new getParticipantName logic
         const sanitizedRootParticipantName = addParticipant(rootParticipantDisplayName);
-        buildDiagramRecursive(rootNode, sanitizedRootParticipantName, lines, addParticipant, 0);
+        buildDiagramRecursive(rootNode, sanitizedRootParticipantName, lines, addParticipant, 0, projectPackagesToInclude);
 
         if (lines.length === 1 + participants.size) {
             const firstParticipant = participants.values().next().value || 'System';
@@ -100,7 +162,8 @@ function buildDiagramRecursive(
     currentParticipantName: string, // This is the SANITIZED name of the CALLER (e.g., TestController)
     lines: string[],
     addParticipant: (name: string) => string,
-    depth: number
+    depth: number,
+    projectPackagesToInclude?: string[] // Added for package filtering
 ): void {
     if (!currentNode.children || currentNode.children.length === 0) {
         return;
@@ -108,6 +171,21 @@ function buildDiagramRecursive(
 
     currentNode.children.forEach(childNode => {
         const abstractChildItem = fromVscodeCallHierarchyItem(childNode.item);
+
+        if (projectPackagesToInclude && projectPackagesToInclude.length > 0) {
+            const childPackageName = getPackageNameFromVscodeItem(abstractChildItem);
+            if (childPackageName === undefined ||
+                !projectPackagesToInclude.some(projPkg =>
+                    childPackageName === projPkg || // Exact match (e.g. default package)
+                    (projPkg !== "" && childPackageName.startsWith(projPkg + '.')) || // Sub-package
+                    (childPackageName === "" && projPkg === "") // Both in default package
+                )) {
+                // console.log(`[MermaidGenerator] Filtering out call to ${abstractChildItem.name} in package '${childPackageName}' (project packages: ${projectPackagesToInclude.join(', ')})`);
+                return; // Skip this child if its package is not in the include list
+            }
+            // console.log(`[MermaidGenerator] Including call to ${abstractChildItem.name} in package '${childPackageName}'`);
+        }
+
         // childParticipantDisplayName will be the CLASS NAME of the callee (e.g., TestController or TestService)
         const childParticipantDisplayName = getParticipantName(abstractChildItem);
         const childParticipantSanitizedName = addParticipant(childParticipantDisplayName); // Sanitized class name
@@ -121,7 +199,7 @@ function buildDiagramRecursive(
 
         // If the child itself has children, recurse.
         // The participant for the next level of recursion is the sanitized class name of the child.
-        buildDiagramRecursive(childNode, childParticipantSanitizedName, lines, addParticipant, depth + 1);
+        buildDiagramRecursive(childNode, childParticipantSanitizedName, lines, addParticipant, depth + 1, projectPackagesToInclude);
 
         // Add a generic return message from the callee back to the caller.
         // This assumes that every call eventually leads to a return that's relevant for the sequence.

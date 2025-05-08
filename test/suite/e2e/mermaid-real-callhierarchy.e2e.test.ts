@@ -266,4 +266,95 @@ suite('E2E Test Suite - Mermaid Diagram with Real Discovery, TestAdapter LLM Dis
         assert.ok(capturedMermaidSyntax!.includes(responseToClient), `Diagram should show generic response to client: ${responseToClient}`);
 
     }).timeout(lspInitializationDelay + 50000); // Keep increased timeout
+
+    test('Should assert the specific Mermaid diagram for TestController.fullComplexHello after package filtering', async () => {
+        assert.ok(vscode.workspace.workspaceFolders, "[E2E Mermaid Specific Test] No workspace folder found.");
+        const workspaceRootUri = vscode.workspace.workspaceFolders![0].uri;
+        const javaFixtureUri = vscode.Uri.joinPath(workspaceRootUri, fixtureRelativePath);
+
+        const document = await vscode.workspace.openTextDocument(javaFixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        console.log('[E2E Mermaid Specific Test - fullComplexHello] Waiting for LSP initialization...');
+        await new Promise(resolve => setTimeout(resolve, lspInitializationDelay));
+        console.log('[E2E Mermaid Specific Test - fullComplexHello] LSP initialization wait finished.');
+
+        // For this specific test, we directly target the endpoint without NLQ or disambiguation.
+        // The goal is to verify the diagram output from a known call hierarchy root.
+        // We will need to manually simulate finding the correct endpoint and its call hierarchy.
+        // This requires a bit more setup if we want to bypass the TestAdapter.
+        // Alternative: Use TestAdapter setup to ensure we get the right root, then check the output.
+        // Let's use the TestAdapter flow for consistency and to ensure the filtering logic
+        // is tested within the same pathway as the previous test.
+
+        const naturalLanguageQuery = "Diagram for fullComplexHello in TestController"; // Query to trigger TestAdapter
+        const chatCommandPrompt = `/restEndpoint ${naturalLanguageQuery}`;
+
+        const targetEndpointDetailsForFullComplexHello = {
+            method: "GET",
+            path: "/api/test/fullcomplexhello",
+            handler: "fullComplexHello()" // Must match what the TestAdapter expects for this endpoint
+        };
+
+        const testAdapterForFullComplexHello = new TestLanguageModelAdapter(targetEndpointDetailsForFullComplexHello, mockAdapterSendRequestSpy);
+
+        const mockExtensionContext: vscode.ExtensionContext = {
+            extensionUri: vscode.Uri.file(path.resolve(__dirname, '../../../../')),
+            subscriptions: [],
+            workspaceState: { get: sandbox.stub().callsFake((key: string, defaultValue?: any) => defaultValue), update: sandbox.stub().resolves(), keys: sandbox.stub().returns([]) } as vscode.Memento,
+            globalState: { get: sandbox.stub().callsFake((key: string, defaultValue?: any) => defaultValue), update: sandbox.stub().resolves(), keys: sandbox.stub().returns([]), setKeysForSync: sandbox.stub() } as vscode.Memento & { setKeysForSync(keys: readonly string[]): void },
+            secrets: { get: sandbox.stub().resolves(''), store: sandbox.stub().resolves(), delete: sandbox.stub().resolves(), onDidChange: sandbox.stub().returns({ dispose: sandbox.stub() }) },
+            extensionPath: path.resolve(__dirname, '../../../../'),
+            storageUri: undefined,
+            globalStorageUri: vscode.Uri.file(path.resolve(__dirname, '../../../../.globalStorage')),
+            logUri: vscode.Uri.file(path.resolve(__dirname, '../../../../.logs')),
+            environmentVariableCollection: { persistent: false, replace: sandbox.stub(), append: sandbox.stub(), prepend: sandbox.stub(), get: sandbox.stub().returns(undefined), forEach: sandbox.stub(), delete: sandbox.stub(), clear: sandbox.stub(), [Symbol.iterator]: sandbox.stub().returns({ next: () => ({ done: true, value: undefined }) }), description: 'mocked EVC', getScoped: sandbox.stub().returns(undefined) } as vscode.GlobalEnvironmentVariableCollection,
+            extensionMode: vscode.ExtensionMode.Test,
+            asAbsolutePath: (relativePath: string) => path.resolve(path.resolve(__dirname, '../../../../'), relativePath),
+            storagePath: undefined,
+            logPath: path.resolve(__dirname, '../../../../.logs'),
+            globalStoragePath: path.resolve(__dirname, '../../../../.globalStorage'),
+            extension: { id: 'farleyknight.dive', extensionUri: vscode.Uri.file(path.resolve(__dirname, '../../../../')), extensionPath: path.resolve(__dirname, '../../../../'), isActive: true, packageJSON: { name: 'dive', version: '0.0.1', publisher: 'farleyknight' }, exports: {}, activate: sandbox.stub().resolves(), extensionKind: vscode.ExtensionKind.Workspace } as vscode.Extension<any>,
+            languageModelAccessInformation: { canSendRequest: sandbox.stub().returns(true), onDidChange: sandbox.stub().returns({ dispose: sandbox.stub() }) } as vscode.LanguageModelAccessInformation,
+        };
+
+        const mockLogger: Partial<vscode.TelemetryLogger> = { logUsage: sandbox.stub(), logError: sandbox.stub().callsFake((errorOrEventName: string | Error, data?: Record<string, any>) => { console.error(`[MockLogger Error] ${errorOrEventName}`, data); }) };
+        const mockStream: Partial<vscode.ChatResponseStream> = { progress: sandbox.stub(), markdown: sandbox.stub().callsFake((md) => console.log(`[MockStream Markdown] ${md}`)), button: sandbox.stub() };
+        const mockRequest: Partial<vscode.ChatRequest> = { command: 'restEndpoint', prompt: chatCommandPrompt };
+        const mockContext: Partial<vscode.ChatContext> = { history: [] };
+
+        const params: any = {
+            request: mockRequest as vscode.ChatRequest, context: mockContext as vscode.ChatContext,
+            stream: mockStream as vscode.ChatResponseStream, token: new vscode.CancellationTokenSource().token,
+            extensionContext: mockExtensionContext, logger: mockLogger as vscode.TelemetryLogger,
+            codeContext: '',
+            lmAdapter: testAdapterForFullComplexHello
+        };
+
+        await handleRestEndpoint(params, naturalLanguageQuery);
+
+        assert.ok(capturedMermaidSyntax, 'Mermaid syntax should have been captured');
+
+        const expectedMermaidOutput = `sequenceDiagram
+    participant Client
+    participant TestController
+    Client->>TestController: GET /api/test/fullcomplexhello
+    Note over TestController: fullComplexHello()
+    TestController->>TestController: privateHelperHello()
+    TestController-->>TestController: Returns
+    participant TestService
+    TestController->>TestService: getServiceData()
+    TestService-->>TestController: Returns
+    TestController->>TestService: getListSize()
+    TestService-->>TestController: Returns
+    TestController-->>Client: Response`.trim().replace(/\\r\\n/g, '\\n'); // Normalize line endings
+
+        const normalizedCapturedSyntax = capturedMermaidSyntax?.trim().replace(/\\r\\n/g, '\\n');
+
+        console.log('[E2E Mermaid Specific Test - fullComplexHello] Expected Syntax:\n', expectedMermaidOutput);
+        console.log('[E2E Mermaid Specific Test - fullComplexHello] Actual Syntax:\n', normalizedCapturedSyntax);
+
+        assert.strictEqual(normalizedCapturedSyntax, expectedMermaidOutput, "Generated Mermaid diagram does not match the expected output for fullComplexHello with package filtering.");
+
+    }).timeout(lspInitializationDelay + 20000); // Adjusted timeout
 });

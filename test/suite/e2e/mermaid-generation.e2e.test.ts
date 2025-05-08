@@ -151,14 +151,14 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
 
         // Assert the new expected structure for a leaf API endpoint
         const expectedDiagramSubstringClient = 'participant Client';
-        const expectedDiagramSubstringController = 'participant TestController_sayHello'; // Sanitized name
-        const expectedDiagramSubstringRequest = 'Client->>TestController_sayHello: GET /api/test/hello';
-        const expectedDiagramSubstringNote = 'Note right of TestController_sayHello: TestController.sayHello()'; // Note uses Class.method()
-        const expectedDiagramSubstringResponse = 'TestController_sayHello-->>Client: 200 OK Response'; // Generic response
+        const expectedDiagramSubstringController = 'participant TestController';
+        const expectedDiagramSubstringRequest = `Client->>${expectedDiagramSubstringController.split(' ')[1]}: GET /api/test/hello`;
+        const expectedDiagramSubstringNote = `Note over ${expectedDiagramSubstringController.split(' ')[1]}: sayHello()`;
+        const expectedDiagramSubstringResponse = `${expectedDiagramSubstringController.split(' ')[1]}-->>Client: 200 OK Response`;
 
         assert.ok(capturedMermaidSyntax!.includes('sequenceDiagram'), 'Diagram should be a sequenceDiagram');
         assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringClient), `Diagram should contain participant Client`);
-        assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringController), `Diagram should contain participant TestController_sayHello`);
+        assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringController), `Diagram should contain participant TestController`);
         assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringRequest), `Diagram should contain the request line`);
         assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringNote), `Diagram should contain the note`);
         assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringResponse), `Diagram should contain the response line`);
@@ -265,10 +265,10 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
         // Updated expectedDiagram to match the actual output
         const expectedDiagram = `sequenceDiagram
     participant Client
-    participant TestController_sayHello
-    Client->>TestController_sayHello: GET /api/test/hello
-    Note right of TestController_sayHello: TestController.sayHello()
-    TestController_sayHello-->>Client: 200 OK Response`;
+    participant TestController
+    Client->>TestController: GET /api/test/hello
+    Note over TestController: sayHello()
+    TestController-->>Client: 200 OK Response`;
 
         assert.ok(getMermaidWebviewHtmlStub.calledOnce, 'getMermaidWebviewHtml should have been called');
         assert.ok(capturedMermaidSyntax, 'Mermaid syntax should have been captured');

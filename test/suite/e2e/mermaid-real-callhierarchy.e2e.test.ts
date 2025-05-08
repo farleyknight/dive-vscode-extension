@@ -143,7 +143,7 @@ suite('E2E Test Suite - Mermaid Diagram with Real Discovery, TestAdapter LLM Dis
         sandbox.restore();
     });
 
-    test('Should use TestAdapter for disambiguation and generate diagram for TestController.sayHello', async () => {
+    test('Should use TestAdapter for disambiguation and generate diagram for TestController.fullComplexHello', async () => {
         assert.ok(vscode.workspace.workspaceFolders, "[E2E Test] No workspace folder found.");
         const workspaceRootUri = vscode.workspace.workspaceFolders![0].uri;
         const javaFixtureUri = vscode.Uri.joinPath(workspaceRootUri, fixtureRelativePath);
@@ -233,31 +233,37 @@ suite('E2E Test Suite - Mermaid Diagram with Real Discovery, TestAdapter LLM Dis
             return value;
         }, 2));
 
-        const expectedParticipantPrefix = 'TestController_fullComplexHello_____String';
-        const privateHelperParticipant = 'TestController_privateHelperHello_____String';
-        const serviceParticipant = 'TestService_getServiceData_____String';
-        // const listSizeServiceParticipant = 'TestService_getListSize_____int'; // Temporarily commented out
-        // const arrayListSizeParticipant = "ArrayList_size_____int"; // Temporarily commented out
+        const clientParticipant = 'Client';
+        const controllerParticipant = 'TestController';
+        const serviceParticipant = 'TestService';
 
         assert.ok(capturedMermaidSyntax!.includes('sequenceDiagram'), 'Diagram should be a sequenceDiagram');
-        assert.ok(capturedMermaidSyntax!.includes(`participant ${expectedParticipantPrefix}`), `Diagram should contain participant ${expectedParticipantPrefix}`);
-        assert.ok(capturedMermaidSyntax!.includes(`participant ${privateHelperParticipant}`), `Diagram should contain participant ${privateHelperParticipant}`);
+        assert.ok(capturedMermaidSyntax!.includes(`participant ${clientParticipant}`), `Diagram should contain participant ${clientParticipant}`);
+        assert.ok(capturedMermaidSyntax!.includes(`participant ${controllerParticipant}`), `Diagram should contain participant ${controllerParticipant}`);
         assert.ok(capturedMermaidSyntax!.includes(`participant ${serviceParticipant}`), `Diagram should contain participant ${serviceParticipant}`);
-        // assert.ok(capturedMermaidSyntax!.includes(`participant ${listSizeServiceParticipant}`), `Diagram should contain participant ${listSizeServiceParticipant}`); // Temporarily commented out
-        // assert.ok(capturedMermaidSyntax!.includes(`participant ${arrayListSizeParticipant}`), `Diagram should contain participant ${arrayListSizeParticipant}`); // Temporarily commented out
 
-        // Check calls
-        const callToPrivateHelper = `${expectedParticipantPrefix}->>${privateHelperParticipant}: privateHelperHello() : String()`;
+        // Check calls and notes based on the provided diagram
+        const callFromClientToController = `${clientParticipant}->>${controllerParticipant}: GET /api/test/fullcomplexhello`;
+        assert.ok(capturedMermaidSyntax!.includes(callFromClientToController), `Diagram should show call: ${callFromClientToController}`);
+
+        const noteOverController1 = `Note over ${controllerParticipant}: fullComplexHello()`;
+        // Normalize spaces for a more robust check, as Mermaid can sometimes vary spacing.
+        assert.ok(capturedMermaidSyntax!.replace(/\s+/g, ' ').includes(noteOverController1.replace(/\s+/g, ' ')), `Diagram should include note: ${noteOverController1}`);
+
+        const callToPrivateHelper = `${controllerParticipant}->>${controllerParticipant}: privateHelperHello()`;
         assert.ok(capturedMermaidSyntax!.includes(callToPrivateHelper), `Diagram should show call: ${callToPrivateHelper}`);
 
-        const callToServiceData = `${expectedParticipantPrefix}->>${serviceParticipant}: getServiceData() : String()`;
-        assert.ok(capturedMermaidSyntax!.includes(callToServiceData), `Diagram should show call: ${callToServiceData}`);
+        const callToService = `${controllerParticipant}->>${serviceParticipant}: getServiceData()`;
+        assert.ok(capturedMermaidSyntax!.includes(callToService), `Diagram should show call: ${callToService}`);
 
-        // const callToListSizeService = `${expectedParticipantPrefix}->>${listSizeServiceParticipant}: getListSize() : int()`; // Temporarily commented out
-        // assert.ok(capturedMermaidSyntax!.includes(callToListSizeService), `Diagram should show call: ${callToListSizeService}`);
+        const responseFromService = `${serviceParticipant}-->>${controllerParticipant}: "Data from TestService"`;
+        assert.ok(capturedMermaidSyntax!.includes(responseFromService), `Diagram should show response: ${responseFromService}`);
 
-        // const callToArrayListSize = `${listSizeServiceParticipant}->>${arrayListSizeParticipant}: size() : int()`; // Temporarily commented out
-        // assert.ok(capturedMermaidSyntax!.includes(callToArrayListSize), `Diagram should show call to ArrayList.size: ${callToArrayListSize}`);
+        const noteOverController2 = `Note over ${controllerParticipant}: Concatenates privateData + " | " + serviceData`;
+        assert.ok(capturedMermaidSyntax!.replace(/\s+/g, ' ').includes(noteOverController2.replace(/\s+/g, ' ')), `Diagram should include note: ${noteOverController2}`);
+
+        const responseToClient = `${controllerParticipant}-->>${clientParticipant}: Response with combined data`;
+        assert.ok(capturedMermaidSyntax!.includes(responseToClient), `Diagram should show response to client: ${responseToClient}`);
 
     }).timeout(lspInitializationDelay + 50000); // Keep increased timeout
 });

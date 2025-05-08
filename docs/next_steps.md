@@ -18,6 +18,10 @@ This file provides a high-level overview of the current development focus.
 
 *   **Detailed Implementation Strategy:**
     *   **Iterative Approach:** This refactoring will be performed incrementally, one `vscode` API usage at a time, across the specified test files. The goal is to ensure the test suite (`npm test` or `npm run test`) passes after each individual change.
+    *   **Progress on `test/suite/call-hierarchy.test.ts`:**
+        *   **(Completed)** Abstracted `vscode.commands.executeCommand` using `ICommandExecutor` (in `src/adapters/vscodeExecution.ts`). Updated `src/call-hierarchy.ts` and the test file.
+        *   **(Completed)** Abstracted `vscode.SymbolKind` using `VSCodeSymbolKind` enum (in `src/adapters/vscodeTypes.ts`). Updated the test file.
+        *   **(Next Steps for this file):** Abstract remaining direct `vscode` usages, likely starting with `vscode.Uri`, `vscode.Position`, and `vscode.Range` used in helper functions and test setup.
     *   **Process for Each `vscode` API Usage:**
         1.  **Identify:** Within one of the target test files (from the "Scope" list), identify a specific direct usage of a `vscode` API (e.g., `vscode.Uri`, `vscode.window.showQuickPick`, `vscode.commands.executeCommand`, `vscode.workspace.workspaceFolders`). Since many files use `import * as vscode from 'vscode'`, this will involve inspecting how the `vscode` namespace object is used.
         2.  **Abstract:** Define a new interface or wrapper function/class (e.g., `IVscodeWindow`, `executeVscodeCommand`, `getWorkspaceFolders`) in a suitable shared location (e.g., `src/adapters/vscode.ts` or similar). This abstraction will define the minimal signature needed by the consuming code.
@@ -106,60 +110,4 @@ This file provides a high-level overview of the current development focus.
     2.  **Implement a `VscodeLanguageModelAdapter`:**
         *   Create a concrete class `VscodeLanguageModelAdapter` that implements `ILanguageModelAdapter`.
         *   This class will wrap an actual `vscode.LanguageModelChat` instance.
-        *   Its `sendRequest` method will call the underlying `vscode.LanguageModelChat.sendRequest`, receive the real VS Code API objects (like `LanguageModelTextPart`), and then *transform* these objects into the plain JavaScript objects defined by our `ILanguageModelAdapter`'s return type. This transformation step is crucial.
-        *   **Verbose Logging:** Implement detailed logging within this adapter to capture the structure of the *actual* objects received from `vscode.LanguageModelChat.sendRequest` (before transformation) and the structure of the objects it returns (after transformation). This will provide the necessary insights for debugging and understanding the real VS Code types.
-
-    3.  **Refactor `disambiguateEndpoint`:**
-        *   Modify `disambiguateEndpoint` to accept an instance of `ILanguageModelAdapter` instead of a direct `vscode.LanguageModelChat` instance.
-        *   Update the stream processing logic within `disambiguateEndpoint` to work with the plain JavaScript objects returned by the adapter's `sendRequest` method. This means removing the `instanceof vscode.LanguageModelTextPart` check and instead relying on a property like `type === 'text'` on the received stream objects to access the `value`.
-
-    4.  **Update E2E Test (`mermaid-real-callhierarchy.e2e.test.ts`):**
-        *   In the test setup, instead of mocking `vscode.lm.selectChatModels` to resolve to a `vscode.LanguageModelChat` mock, create a *test-specific implementation* of `ILanguageModelAdapter`.
-        *   This test adapter's `sendRequest` method will be much simpler:
-            *   It will still perform the line-by-line parsing of the prompt to determine the chosen index.
-            *   It will then directly construct and yield the plain JavaScript objects (e.g., `{ type: 'text', value: '8' }`) that the refactored `disambiguateEndpoint` now expects from the adapter.
-        *   This completely bypasses the `instanceof` issue and gives us full control over the data `disambiguateEndpoint` receives from its LLM interaction point.
-
-    5.  **Iterative Debugging with Manual Log Analysis:**
-        *   During the implementation of `VscodeLanguageModelAdapter`, logs of the real structures from `vscode.LanguageModelChat.sendRequest` will be manually provided.
-        *   These logs will be used to refine the transformation logic in `VscodeLanguageModelAdapter` and to ensure the plain JavaScript objects accurately represent the necessary information.
-        *   This will also inform the design of the simplified objects that the test adapter and the refactored `disambiguateEndpoint` will use.
-
-    6.  **Update `docs/mistakes.md` (If Applicable):** If this abstraction strategy significantly improves testability around `instanceof` issues with external APIs, consider adding a point about it.
-
-*   **Expected Outcome:** The `test/suite/e2e/mermaid-real-callhierarchy.e2e.test.ts` should pass reliably. `disambiguateEndpoint` will be more robustly testable and less coupled to the specifics of `vscode.LanguageModelChat`'s returned object instances.
-
-## Call Hierarchy MVP (Secondary Priority)
-
-The primary focus has shifted to implementing the **Call Hierarchy** feature for `/restEndpoint`. We are taking an MVP (Minimum Viable Product) approach to get this working end-to-end.
-
-*   **Previous Task (Endpoint Disambiguation):** Initial implementation for endpoint disambiguation (including heuristic checks and basic LLM integration) is complete. Further enhancements and advanced scenarios will be revisited after the MVP for call hierarchy is established. The immediate next step for disambiguation is to refactor the fallback mechanism to use chat-based clarification instead of `showQuickPick`.
-*   **Current Top Priority:** Design and implement the call hierarchy determination for a selected endpoint. This is the core of the Call Hierarchy MVP.
-    *   **(Completed)** Integrate the existing `buildCallHierarchyTree` function (from `src/call-hierarchy.ts`) into the `/restEndpoint` command handler.
-    *   Implement logic to translate the `CustomHierarchyNode` tree structure (from `buildCallHierarchyTree`) into a Mermaid sequence diagram format.
-    *   Display the generated Mermaid diagram to the user within the webview (likely using the existing `createAndShowDiagramWebview` mechanism).
-    *   **Manual Testing & Observation:** Run the `/restEndpoint` command with a Java Spring Boot project to observe the generated sequence diagram. Note issues with participant names, call flow, and overall clarity.
-    *   **Refinement (based on testing):** Refine `getParticipantName`, consider adding `activate`/`deactivate` logic, and address any issues in `sanitizeParticipantName` or `escapeMermaidMessage` in `src/mermaid-sequence-translator.ts`.
-    *   Add dedicated unit tests for `src/call-hierarchy.ts` (mocking `vscode.commands.executeCommand`).
-    *   Add unit tests for the Mermaid diagram translation logic (`src/mermaid-sequence-translator.ts`).
-    *   **Advance E2E Testing for Call Hierarchy (`/restEndpoint`):**
-        *   **(Completed)** Modified `test/suite/e2e/mermaid-real-callhierarchy.e2e.test.ts` to use the real `discoverEndpoints` function and real call hierarchy LSP, significantly increasing test coverage of the actual endpoint identification and diagramming pipeline. The `disambiguateEndpoint` function remains stubbed in this test to ensure the target endpoint (e.g., `sayHello()`) is selected correctly after real discovery.
-        *   **Next: Unmock `disambiguateEndpoint` in E2E Tests:** The subsequent step for `test/suite/e2e/mermaid-real-callhierarchy.e2e.test.ts` is to unmock the `disambiguateEndpoint` function. This will be revisited *after* the `ILanguageModelAdapter` refactoring is complete. The adapter strategy should make this step much more straightforward.
-            *   **Mitigating LLM Flakiness (Post-Adapter):** Once the adapter is in place, if the real `VscodeLanguageModelAdapter` is used in some E2E tests:
-                *   **Robust Prompt Engineering:** Design highly specific and unambiguous prompts for the test scenarios.
-                *   **Retry Mechanism:** Implement a retry loop within the E2E test.
-                *   **Statistical Reliability:** This retry approach significantly enhances test stability.
-                *   **Outcome Logging:** Each attempt's outcome will be logged.
-*   **Detailed Status & Plan:** See `docs/rest_endpoint_feature.md` (this document is also being updated to reflect the current priorities and progress).
-
-## Guiding Principles
-
-Please refer to `docs/development_principles.md` for important guidelines, especially regarding unit testing.
-
-## Recently Completed Tasks
-
-See `docs/completed_major_tasks.md` for a list of recently finished items.
-
-## Anti-Patterns
-
-See `docs/mistakes.md` for patterns to avoid.
+        *   Its `sendRequest` method will call the underlying `

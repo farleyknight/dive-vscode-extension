@@ -256,14 +256,14 @@ suite('E2E Test Suite - Mermaid Diagram with Real Discovery, TestAdapter LLM Dis
         const callToService = `${controllerParticipant}->>${serviceParticipant}: getServiceData()`;
         assert.ok(capturedMermaidSyntax!.includes(callToService), `Diagram should show call: ${callToService}`);
 
-        const responseFromService = `${serviceParticipant}-->>${controllerParticipant}: "Data from TestService"`;
-        assert.ok(capturedMermaidSyntax!.includes(responseFromService), `Diagram should show response: ${responseFromService}`);
+        const returnFromPrivateHelper = `${controllerParticipant}-->>${controllerParticipant}: Returns`;
+        assert.ok(capturedMermaidSyntax!.includes(returnFromPrivateHelper), `Diagram should show return from private helper: ${returnFromPrivateHelper}`);
 
-        const noteOverController2 = `Note over ${controllerParticipant}: Concatenates privateData + " | " + serviceData`;
-        assert.ok(capturedMermaidSyntax!.replace(/\s+/g, ' ').includes(noteOverController2.replace(/\s+/g, ' ')), `Diagram should include note: ${noteOverController2}`);
+        const responseFromService = `${serviceParticipant}-->>${controllerParticipant}: Returns`;
+        assert.ok(capturedMermaidSyntax!.includes(responseFromService), `Diagram should show generic return from service: ${responseFromService}`);
 
-        const responseToClient = `${controllerParticipant}-->>${clientParticipant}: Response with combined data`;
-        assert.ok(capturedMermaidSyntax!.includes(responseToClient), `Diagram should show response to client: ${responseToClient}`);
+        const responseToClient = `${controllerParticipant}-->>${clientParticipant}: Response`;
+        assert.ok(capturedMermaidSyntax!.includes(responseToClient), `Diagram should show generic response to client: ${responseToClient}`);
 
     }).timeout(lspInitializationDelay + 50000); // Keep increased timeout
 });

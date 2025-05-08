@@ -113,7 +113,7 @@ suite('MermaidSequenceTranslator', () => {
     participant TestController
     Client->>TestController: GET /api/test/hello
     Note over TestController: sayHello()
-    TestController-->>Client: 200 OK Response`;
+    TestController-->>Client: Response`;
             assert.strictEqual(result.replace(/\r\n/g, '\n'), expectedDiagram.replace(/\r\n/g, '\n'));
         });
     });

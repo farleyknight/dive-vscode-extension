@@ -154,7 +154,7 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
         const expectedDiagramSubstringController = 'participant TestController';
         const expectedDiagramSubstringRequest = `Client->>${expectedDiagramSubstringController.split(' ')[1]}: GET /api/test/hello`;
         const expectedDiagramSubstringNote = `Note over ${expectedDiagramSubstringController.split(' ')[1]}: sayHello()`;
-        const expectedDiagramSubstringResponse = `${expectedDiagramSubstringController.split(' ')[1]}-->>Client: 200 OK Response`;
+        const expectedDiagramSubstringResponse = `${expectedDiagramSubstringController.split(' ')[1]}-->>Client: Response`;
 
         assert.ok(capturedMermaidSyntax!.includes('sequenceDiagram'), 'Diagram should be a sequenceDiagram');
         assert.ok(capturedMermaidSyntax!.includes(expectedDiagramSubstringClient), `Diagram should contain participant Client`);
@@ -268,7 +268,7 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
     participant TestController
     Client->>TestController: GET /api/test/hello
     Note over TestController: sayHello()
-    TestController-->>Client: 200 OK Response`;
+    TestController-->>Client: Response`;
 
         assert.ok(getMermaidWebviewHtmlStub.calledOnce, 'getMermaidWebviewHtml should have been called');
         assert.ok(capturedMermaidSyntax, 'Mermaid syntax should have been captured');

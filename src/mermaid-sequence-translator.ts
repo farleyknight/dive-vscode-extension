@@ -64,29 +64,12 @@ export function generateMermaidSequenceDiagram(
         lines.push(`    Note over ${controllerParticipant}: ${rootMethodNameForNote}()`);
 
         if (!rootNode.children || rootNode.children.length === 0) {
-            lines.push(`    ${controllerParticipant}-->>${clientParticipant}: 200 OK Response`);
+            lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
         } else {
             buildDiagramRecursive(rootNode, controllerParticipant, lines, addParticipant, 0);
 
-            // Specific handling for fullComplexHello structure based on user diagram
-            // This is a bit hardcoded for the example; a more generic solution would be complex.
-            const isFullComplexHello = rootMethodNameForNote === 'fullComplexHello' && controllerClassName === 'TestController';
-
-            if (isFullComplexHello) {
-                // Find TestService participant (assuming it was added by buildDiagramRecursive)
-                const serviceParticipant = sanitizeParticipantName('TestService'); // Match how it would be added
-                if (participants.has(serviceParticipant)) {
-                    lines.push(`    ${serviceParticipant}-->>${controllerParticipant}: "Data from TestService"`);
-                    lines.push(`    Note over ${controllerParticipant}: Concatenates privateData + " | " + serviceData`);
-                    lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response with combined data`);
-                } else {
-                    // Fallback if TestService wasn't called or found
-                    lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
-                }
-            } else {
-                // Generic response for other multi-call endpoints
-                lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
-            }
+            // After all recursive calls, add the final response from the controller to the client.
+            lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
         }
     } else {
         // Original logic for non-endpoint call hierarchies
@@ -139,6 +122,10 @@ function buildDiagramRecursive(
         // If the child itself has children, recurse.
         // The participant for the next level of recursion is the sanitized class name of the child.
         buildDiagramRecursive(childNode, childParticipantSanitizedName, lines, addParticipant, depth + 1);
+
+        // Add a generic return message from the callee back to the caller.
+        // This assumes that every call eventually leads to a return that's relevant for the sequence.
+        lines.push(`    ${childParticipantSanitizedName}-->>${currentParticipantName}: Returns`);
     });
 }
 

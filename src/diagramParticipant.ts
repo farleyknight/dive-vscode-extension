@@ -8,7 +8,7 @@ import createDOMPurify from 'dompurify';
 import { EndpointInfo, discoverEndpoints } from './endpoint-discovery'; // Corrected: discoverEndpoints and EndpointInfo from here
 import { disambiguateEndpoint } from './endpoint-disambiguation'; // Corrected: disambiguateEndpoint from here
 import { buildCallHierarchyTree, CustomHierarchyNode } from './call-hierarchy'; // Import from new module
-import { generateMermaidSequenceDiagram } from '../src/mermaid-sequence-translator'; // Added import
+import { generateMermaidSequenceDiagram, EndpointDiagramDetails } from '../src/mermaid-sequence-translator'; // Added import, EndpointDiagramDetails
 import { ILanguageModelAdapter } from './llm/iLanguageModelAdapter'; // Added for lmAdapter
 import { VscodeLanguageModelAdapter } from './llm/vscodeLanguageModelAdapter'; // Added for instantiating
 import { VscodeCommandExecutor, ICommandExecutor } from './adapters/vscodeExecution'; // Added ICommandExecutor
@@ -385,69 +385,73 @@ Please generate a Mermaid sequence diagram (\`sequenceDiagram\`) showing the cal
 // Handler for /restEndpoint command
 export async function handleRestEndpoint(params: CommandHandlerParams, naturalLanguageQuery: string): Promise<IChatResult> {
     const { request, context, stream, token, extensionContext, logger, lmAdapter } = params;
-    const commandName = 'restEndpoint';
-    console.log(`[Debug][${commandName}] handler started. Query: ${naturalLanguageQuery}`); // DEBUG
+    const commandName = '[restEndpoint]'; // For logging
+    logger.logUsage(commandName, { status: 'started', query: naturalLanguageQuery });
 
-    // Discover endpoints
+    // VscodeCommandExecutor is used by buildCallHierarchyTree later.
+    const commandExecutor: ICommandExecutor = new VscodeCommandExecutor();
+
+    // 1. Discover all endpoints in the workspace
     stream.progress('Discovering REST endpoints...');
-    const endpoints = await discoverEndpoints(token);
-    console.log(`[Debug][${commandName}] discoverEndpoints returned ${endpoints.length} endpoints`); // DEBUG
-    if (endpoints.length === 0) {
-        logger.logUsage(`[${commandName}] discoverEndpoints`, { status: 'no_endpoints_found' });
-        stream.markdown('No REST endpoints found in the current workspace. Ensure your project uses common annotations like @RestController, @GetMapping, etc.');
-        return { metadata: { command: commandName } };
-    }
-    logger.logUsage(`[${commandName}] discoverEndpoints`, { status: 'found', count: endpoints.length });
+    // Pass params.token (ICancellationToken) directly.
+    // Pass undefined for optional providers to use defaults within discoverEndpoints.
+    const allEndpoints = await discoverEndpoints(token, undefined, undefined, undefined);
+    if (token.isCancellationRequested) { return { metadata: { command: commandName } }; }
 
-    // Disambiguate
-    stream.progress('Selecting the target endpoint...');
-    if (!lmAdapter) {
-        logger.logError(new Error('Language model adapter not available for disambiguation'), { stage: commandName });
-        stream.markdown('Error: Language model adapter is not configured.');
+    if (!allEndpoints || allEndpoints.length === 0) {
+        stream.markdown('No REST endpoints found in the current workspace. Ensure your project uses common annotations like @RestController, @GetMapping, etc.');
+        logger.logUsage(`${commandName} discoverEndpoints`, { status: 'no_endpoints_found' });
         return { metadata: { command: commandName } };
     }
-    const targetEndpoint = await disambiguateEndpoint(naturalLanguageQuery, endpoints, stream, token, lmAdapter, logger);
-    console.log(`[Debug][${commandName}] disambiguateEndpoint returned: ${targetEndpoint ? targetEndpoint.path : 'null'}`); // DEBUG
+    logger.logUsage(`${commandName} discoverEndpoints`, { status: 'success', count: allEndpoints.length });
+
+    // 2. Disambiguate to find the target endpoint based on the natural language query
+    stream.progress('Figuring out which endpoint you mean...');
+    // Arguments: query, endpoints, stream, token (ICancellationToken), lmAdapter, logger
+    const targetEndpoint = await disambiguateEndpoint(
+        naturalLanguageQuery,
+        allEndpoints,
+        stream,
+        token,
+        lmAdapter!,
+        logger
+    );
+    if (token.isCancellationRequested) { return { metadata: { command: commandName } }; }
 
     if (!targetEndpoint) {
-        logger.logUsage(`[${commandName}] disambiguateEndpoint`, { status: 'no_target_endpoint' });
+        // disambiguateEndpoint will have already streamed a message to the user
+        logger.logUsage(`${commandName} disambiguateEndpoint`, { status: 'no_target_endpoint' });
         return { metadata: { command: commandName } };
     }
-    logger.logUsage(`[${commandName}] disambiguateEndpoint`, { status: 'success', chosenPath: targetEndpoint.path });
+    logger.logUsage(`${commandName} disambiguateEndpoint`, { status: 'success', path: targetEndpoint.path, method: targetEndpoint.method });
 
-    // Build Call Hierarchy
+    // 3. Build Call Hierarchy
     stream.progress(`Building call hierarchy for ${targetEndpoint.handlerMethodName}...`);
-    const commandExecutor: ICommandExecutor = new VscodeCommandExecutor();
-    let hierarchyRoot: CustomHierarchyNode | null = null;
-    try {
-        const targetUri: IUri = targetEndpoint.uri;
-        const targetPosition: IPosition = targetEndpoint.position;
-        console.log(`[Debug][${commandName}] Calling buildCallHierarchyTree for ${targetEndpoint.handlerMethodName}`); // DEBUG
-        hierarchyRoot = await buildCallHierarchyTree(commandExecutor, targetUri, targetPosition, logger, token);
-        console.log(`[Debug][${commandName}] buildCallHierarchyTree returned: ${hierarchyRoot ? 'root node' : 'null'}`); // DEBUG
+    // commandExecutor is an ICommandExecutor; token is an ICancellationToken.
+    const hierarchyRoot = await buildCallHierarchyTree(
+        commandExecutor,
+        targetEndpoint.uri,
+        targetEndpoint.position,
+        logger,
+        token
+    );
+    if (token.isCancellationRequested) { return { metadata: { command: commandName } }; }
 
-        if (token.isCancellationRequested) {
-            logger.logUsage(`[${commandName}] buildCallHierarchyTree`, { status: 'cancelled' });
-            stream.markdown('Call hierarchy generation was cancelled.');
-            return { metadata: { command: commandName } };
-        }
-        if (!hierarchyRoot) {
-            logger.logUsage(`[${commandName}] buildCallHierarchyTree`, { status: 'no_root' });
-            stream.markdown('Could not build the call hierarchy for the selected endpoint. The endpoint might not have any outgoing calls or there might have been an issue processing it.');
-            return { metadata: { command: commandName } };
-        }
-        logger.logUsage(`[${commandName}] buildCallHierarchyTree`, { status: 'success' });
-    } catch (error) {
-        logger.logError(error instanceof Error ? error : new Error(String(error)), { stage: 'buildCallHierarchyTree', endpoint: targetEndpoint.path });
-        stream.markdown(`An error occurred while building the call hierarchy: ${error instanceof Error ? error.message : String(error)}`);
+    if (!hierarchyRoot) {
+        stream.markdown('Could not build the call hierarchy for the selected endpoint. The endpoint might not have any outgoing calls or there might have been an issue processing it.');
+        logger.logUsage(`${commandName} buildCallHierarchyTree`, { status: 'no_root' });
         return { metadata: { command: commandName } };
     }
+    logger.logUsage(`${commandName} buildCallHierarchyTree`, { status: 'success', root: hierarchyRoot.item.name });
 
-    // Generate Mermaid Diagram
+    // 4. Generate Mermaid Diagram
     stream.progress('Generating sequence diagram...');
-    console.log(`[Debug][${commandName}] Calling generateMermaidSequenceDiagram`); // DEBUG
-    const mermaidDiagram = generateMermaidSequenceDiagram(hierarchyRoot);
-    console.log(`[Debug][${commandName}] generateMermaidSequenceDiagram returned syntax (length ${mermaidDiagram?.length ?? 0}):\n${mermaidDiagram?.substring(0, 100)}...`); // DEBUG
+    const endpointDetails: EndpointDiagramDetails = {
+        path: targetEndpoint.path,
+        method: targetEndpoint.method,
+        handlerName: targetEndpoint.handlerMethodName
+    };
+    const mermaidDiagram = generateMermaidSequenceDiagram(hierarchyRoot, endpointDetails);
 
     if (!mermaidDiagram) {
         stream.markdown('Failed to generate the Mermaid sequence diagram from the call hierarchy.');

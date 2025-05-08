@@ -15,7 +15,7 @@ The "Dive" VS Code extension enhances code understanding and navigation by provi
     *   **Endpoint Discovery:** The system scans Java files, identifies Spring annotations (e.g., `@RestController`, `@GetMapping`), and builds a list of discoverable endpoints.
     *   **Endpoint Disambiguation:** If the user's query is ambiguous or matches multiple endpoints, an LLM is used to help select the most relevant target endpoint from the discovered list.
     *   **Call Hierarchy Construction:** For the selected endpoint, VS Code's built-in Call Hierarchy feature is utilized to trace outgoing calls from the endpoint's handler method. This produces a detailed call tree.
-    *   **Mermaid Sequence Diagram:** The constructed call hierarchy is then translated into a Mermaid sequence diagram, which is displayed in a webview. This provides a visual representation of the runtime execution flow originating from the REST endpoint.
+    *   **Mermaid Sequence Diagram:** The constructed call hierarchy is then translated into a Mermaid sequence diagram, showing the interaction originating from a client request. For simple endpoints with no further internal calls, the diagram shows the direct Client -> Controller -> Client flow. For more complex endpoints, it visualizes the subsequent calls derived from the call hierarchy. The response message from the controller to the client is currently represented generically (e.g., `Controller-->>Client: 200 OK Response`).
 
 ### Technical Details & Architecture:
 

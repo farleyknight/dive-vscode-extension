@@ -3,12 +3,26 @@ import { ICallHierarchyItem, VSCodeSymbolKind } from './adapters/vscodeTypes'; /
 import { fromVscodeCallHierarchyItem } from './adapters/vscodeUtils'; // Added
 
 /**
+ * Optional details for generating a sequence diagram specifically for an API endpoint.
+ */
+export interface EndpointDiagramDetails {
+    path: string;        // e.g., "/api/test/hello"
+    method: string;      // e.g., "GET"
+    handlerName: string; // e.g., "sayHello"
+    // We might add expected response code/content later if needed for more detailed diagrams
+}
+
+/**
  * Generates a Mermaid sequence diagram string from a call hierarchy tree.
  *
  * @param rootNode The root of the call hierarchy tree (CustomHierarchyNode).
+ * @param endpointDetails Optional details if the rootNode represents an API endpoint.
  * @returns A string representing the Mermaid sequence diagram.
  */
-export function generateMermaidSequenceDiagram(rootNode: CustomHierarchyNode | null): string {
+export function generateMermaidSequenceDiagram(
+    rootNode: CustomHierarchyNode | null,
+    endpointDetails?: EndpointDiagramDetails
+): string {
     if (!rootNode) {
         return 'sequenceDiagram\n    participant User\n    User->>System: No call hierarchy data to display.';
     }
@@ -16,7 +30,6 @@ export function generateMermaidSequenceDiagram(rootNode: CustomHierarchyNode | n
     const lines: string[] = ['sequenceDiagram'];
     const participants = new Set<string>();
 
-    // Helper function to add participants and ensure they are declared only once
     const addParticipant = (name: string) => {
         const sanitizedName = sanitizeParticipantName(name);
         if (!participants.has(sanitizedName)) {
@@ -26,20 +39,40 @@ export function generateMermaidSequenceDiagram(rootNode: CustomHierarchyNode | n
         return sanitizedName;
     };
 
-    // Add the initial caller (e.g., the endpoint itself or a conceptual "User")
-    // For now, let's use the root node's name as the first participant.
-    // We might need a more sophisticated way to determine the ultimate "initiator" later.
-    const abstractRootItem = fromVscodeCallHierarchyItem(rootNode.item); // Convert
-    const rootParticipantName = addParticipant(getParticipantName(abstractRootItem)); // Use converted item
+    const abstractRootItem = fromVscodeCallHierarchyItem(rootNode.item);
+    const rootParticipantName = getParticipantName(abstractRootItem);
+    const sanitizedRootParticipantName = sanitizeParticipantName(rootParticipantName);
 
-    // Recursive helper to build diagram lines
-    buildDiagramRecursive(rootNode, rootParticipantName, lines, addParticipant, 0);
+    if (endpointDetails) {
+        const clientParticipant = addParticipant('Client');
+        // Ensure the main endpoint handler (controller) is added as a participant
+        // getParticipantName often returns Class.method, sanitize will handle it
+        const controllerParticipant = addParticipant(rootParticipantName); // rootParticipantName is already Class.method
 
-    if (lines.length === 1 + participants.size) { // Only "sequenceDiagram" and participant lines, no interactions
-        const firstParticipant = participants.values().next().value || 'System';
-        lines.push(`    ${firstParticipant}->>${firstParticipant}: No outgoing calls found to diagram.`);
+        lines.push(`    ${clientParticipant}->>${controllerParticipant}: ${endpointDetails.method} ${endpointDetails.path}`);
+        lines.push(`    Note right of ${controllerParticipant}: ${rootParticipantName}()`); // Use the non-sanitized name for the note for readability
+
+        if (!rootNode.children || rootNode.children.length === 0) {
+            // For leaf nodes like sayHello, add the direct response to Client
+            // The actual response message might need to be more dynamic later
+            lines.push(`    ${controllerParticipant}-->>${clientParticipant}: 200 OK Response`);
+        } else {
+            // If there are internal calls, process them
+            buildDiagramRecursive(rootNode, controllerParticipant, lines, addParticipant, 0);
+            // After internal calls, the endpoint eventually responds to the client
+            // This is a simplified return; a real system might have complex return paths
+            lines.push(`    ${controllerParticipant}-->>${clientParticipant}: Response`);
+        }
+    } else {
+        // Original logic for non-endpoint call hierarchies
+        addParticipant(rootParticipantName);
+        buildDiagramRecursive(rootNode, sanitizedRootParticipantName, lines, addParticipant, 0);
+
+        if (lines.length === 1 + participants.size) {
+            const firstParticipant = participants.values().next().value || 'System';
+            lines.push(`    ${firstParticipant}->>${firstParticipant}: No outgoing calls found to diagram.`);
+        }
     }
-
 
     return lines.join('\n');
 }
@@ -55,7 +88,7 @@ export function generateMermaidSequenceDiagram(rootNode: CustomHierarchyNode | n
  */
 function buildDiagramRecursive(
     currentNode: CustomHierarchyNode,
-    currentParticipantName: string,
+    currentParticipantName: string, // This should be the sanitized name
     lines: string[],
     addParticipant: (name: string) => string,
     depth: number
@@ -65,20 +98,14 @@ function buildDiagramRecursive(
     }
 
     currentNode.children.forEach(childNode => {
-        const abstractChildItem = fromVscodeCallHierarchyItem(childNode.item); // Convert
-        const childParticipantName = addParticipant(getParticipantName(abstractChildItem)); // Use converted item
-        const callMessage = escapeMermaidMessage(abstractChildItem.name); // Use name from abstract item
+        const abstractChildItem = fromVscodeCallHierarchyItem(childNode.item);
+        const childParticipantDisplayName = getParticipantName(abstractChildItem);
+        const childParticipantSanitizedName = addParticipant(childParticipantDisplayName);
+        const callMessage = escapeMermaidMessage(abstractChildItem.name); // Use name from abstract item for message
 
-        // Standard call
-        lines.push(`    ${currentParticipantName}->>${childParticipantName}: ${callMessage}()`);
+        lines.push(`    ${currentParticipantName}->>${childParticipantSanitizedName}: ${callMessage}()`);
 
-        // Recursively process children of this child
-        buildDiagramRecursive(childNode, childParticipantName, lines, addParticipant, depth + 1);
-
-        // For simplicity, MVP doesn't explicitly model return values yet,
-        // but you could add something like:
-        // lines.push(`    ${childParticipantName}-->>${currentParticipantName}: return`);
-        // Or use activate/deactivate for call spans
+        buildDiagramRecursive(childNode, childParticipantSanitizedName, lines, addParticipant, depth + 1);
     });
 }
 
@@ -90,19 +117,11 @@ function buildDiagramRecursive(
  * @returns A string suitable for use as a participant name.
  */
 export function getParticipantName(item: ICallHierarchyItem): string {
-    // vscode.SymbolKind.Class = 4, vscode.SymbolKind.Interface = 10 (for item.kind)
-    // item.detail often contains the class name or module path.
-    // Example: item.name = "myMethod", item.detail = "com.example.MyClass"
-    // We want "MyClass.myMethod" or just "myMethod" if class is not clear.
-
     let detailName = '';
     if (item.detail) {
-        // Try to extract class name from a fully qualified path
-        const pathParts = item.detail.split(/[.\/]/); // Split by '.', '', or '/'
-        const potentialClassName = pathParts.pop(); // Get the last part
+        const pathParts = item.detail.split(/[.\/]/);
+        const potentialClassName = pathParts.pop();
         if (potentialClassName && potentialClassName !== item.name) {
-             // Heuristic: if the last part of detail is not the method name itself, it might be the class.
-            // And if item.kind suggests it's a method or function within a structure.
             if (item.kind === VSCodeSymbolKind.Method ||
                 item.kind === VSCodeSymbolKind.Function ||
                 item.kind === VSCodeSymbolKind.Constructor) {
@@ -112,7 +131,6 @@ export function getParticipantName(item: ICallHierarchyItem): string {
     }
 
     if (detailName) {
-        // If the item name itself already contains the detailName (e.g. name is "MyClass.myMethod"), don't prepend.
         if (item.name.startsWith(detailName + '.')) {
             return item.name;
         }
@@ -131,14 +149,8 @@ export function getParticipantName(item: ICallHierarchyItem): string {
  * @returns A sanitized name.
  */
 export function sanitizeParticipantName(name: string): string {
-    // Replace spaces, dots, colons, parentheses, brackets with underscores
-    // Remove or replace other characters as needed.
-    // Mermaid also allows quoting: participant "Name with spaces"
-    // However, for simplicity in linking, avoiding spaces is better.
     let sanitized = name.replace(/[\s.:()\[\]{}]/g, '_');
-    // Remove any leading/trailing underscores that might result
     sanitized = sanitized.replace(/^_+|_+$/g, '');
-    // Ensure it's not empty
     if (!sanitized) {
         return 'UnknownParticipant';
     }
@@ -154,11 +166,5 @@ export function sanitizeParticipantName(name: string): string {
  * @returns An escaped string suitable for display in a Mermaid diagram.
  */
 export function escapeMermaidMessage(message: string): string {
-    // According to Mermaid docs, for messages (text on arrows), most things are fine.
-    // However, a colon `:` can be problematic if not intended as a message separator.
-    // Using HTML entity `#58;` for colon is a common workaround.
-    // For now, let's keep it simple and see if direct usage works.
-    // If issues arise, we can implement stricter escaping.
-    // Example: return message.replace(/:/g, '#58;');
-    return message; // Keep simple for now
+    return message;
 }

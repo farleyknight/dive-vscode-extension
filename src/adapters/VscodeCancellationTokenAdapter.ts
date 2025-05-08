@@ -2,14 +2,14 @@ import * as vscode from 'vscode';
 import { ICancellationToken } from './vscodeTypes';
 
 export class VscodeCancellationTokenAdapter implements ICancellationToken {
-    constructor(private readonly vscodeToken: vscode.CancellationToken) {}
+    constructor(public readonly originalToken: vscode.CancellationToken) {}
 
     get isCancellationRequested(): boolean {
-        return this.vscodeToken.isCancellationRequested;
+        return this.originalToken.isCancellationRequested;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     get onCancellationRequested(): (listener: (e: any) => any, thisArgs?: any, disposables?: { dispose(): any }[]) => { dispose(): any } {
-        return this.vscodeToken.onCancellationRequested;
+        return this.originalToken.onCancellationRequested;
     }
 }

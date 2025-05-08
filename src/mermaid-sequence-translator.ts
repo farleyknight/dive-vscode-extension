@@ -1,5 +1,6 @@
-import * as vscode from 'vscode';
-import { CustomHierarchyNode } from './call-hierarchy'; // Assuming CustomHierarchyNode is exported from call-hierarchy.ts
+import { CustomHierarchyNode } from './call-hierarchy';
+import { ICallHierarchyItem, VSCodeSymbolKind } from './adapters/vscodeTypes'; // Added
+import { fromVscodeCallHierarchyItem } from './adapters/vscodeUtils'; // Added
 
 /**
  * Generates a Mermaid sequence diagram string from a call hierarchy tree.
@@ -28,7 +29,8 @@ export function generateMermaidSequenceDiagram(rootNode: CustomHierarchyNode | n
     // Add the initial caller (e.g., the endpoint itself or a conceptual "User")
     // For now, let's use the root node's name as the first participant.
     // We might need a more sophisticated way to determine the ultimate "initiator" later.
-    const rootParticipantName = addParticipant(getParticipantName(rootNode.item));
+    const abstractRootItem = fromVscodeCallHierarchyItem(rootNode.item); // Convert
+    const rootParticipantName = addParticipant(getParticipantName(abstractRootItem)); // Use converted item
 
     // Recursive helper to build diagram lines
     buildDiagramRecursive(rootNode, rootParticipantName, lines, addParticipant, 0);
@@ -63,8 +65,9 @@ function buildDiagramRecursive(
     }
 
     currentNode.children.forEach(childNode => {
-        const childParticipantName = addParticipant(getParticipantName(childNode.item));
-        const callMessage = escapeMermaidMessage(childNode.item.name); // Escape message content
+        const abstractChildItem = fromVscodeCallHierarchyItem(childNode.item); // Convert
+        const childParticipantName = addParticipant(getParticipantName(abstractChildItem)); // Use converted item
+        const callMessage = escapeMermaidMessage(abstractChildItem.name); // Use name from abstract item
 
         // Standard call
         lines.push(`    ${currentParticipantName}->>${childParticipantName}: ${callMessage}()`);
@@ -86,7 +89,7 @@ function buildDiagramRecursive(
  * @param item The CallHierarchyItem.
  * @returns A string suitable for use as a participant name.
  */
-export function getParticipantName(item: vscode.CallHierarchyItem): string {
+export function getParticipantName(item: ICallHierarchyItem): string {
     // vscode.SymbolKind.Class = 4, vscode.SymbolKind.Interface = 10 (for item.kind)
     // item.detail often contains the class name or module path.
     // Example: item.name = "myMethod", item.detail = "com.example.MyClass"
@@ -100,9 +103,9 @@ export function getParticipantName(item: vscode.CallHierarchyItem): string {
         if (potentialClassName && potentialClassName !== item.name) {
              // Heuristic: if the last part of detail is not the method name itself, it might be the class.
             // And if item.kind suggests it's a method or function within a structure.
-            if (item.kind === vscode.SymbolKind.Method ||
-                item.kind === vscode.SymbolKind.Function ||
-                item.kind === vscode.SymbolKind.Constructor) {
+            if (item.kind === VSCodeSymbolKind.Method ||
+                item.kind === VSCodeSymbolKind.Function ||
+                item.kind === VSCodeSymbolKind.Constructor) {
                 detailName = potentialClassName;
             }
         }

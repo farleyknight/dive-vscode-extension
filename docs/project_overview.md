@@ -1,5 +1,42 @@
 # Project Overview
 
+The "Dive" VS Code extension enhances code understanding and navigation by providing AI-powered diagram generation and REST endpoint analysis capabilities.
+
+### Core Features:
+
+1.  **AI-Powered Diagram Generation:**
+    *   Users can select a block of code or use the entire active file.
+    *   Commands like `/simpleUML`, `/relationUML`, and `/sequence` leverage a Large Language Model (LLM) to analyze the code and generate corresponding diagrams in Mermaid syntax.
+    *   Generated diagrams are displayed in a dedicated webview panel within VS Code, allowing for easy visualization of code structure, relationships, and interactions.
+    *   Mermaid syntax validation is performed (using a Node.js environment with JSDOM and the `mermaid` library) before attempting to render, providing feedback on syntax errors.
+
+2.  **REST Endpoint Analysis & Sequence Diagram Generation:**
+    *   The `/restEndpoint` command allows users to query for specific REST endpoints within their workspace (currently focused on Java Spring Boot projects).
+    *   **Endpoint Discovery:** The system scans Java files, identifies Spring annotations (e.g., `@RestController`, `@GetMapping`), and builds a list of discoverable endpoints.
+    *   **Endpoint Disambiguation:** If the user's query is ambiguous or matches multiple endpoints, an LLM is used to help select the most relevant target endpoint from the discovered list.
+    *   **Call Hierarchy Construction:** For the selected endpoint, VS Code's built-in Call Hierarchy feature is utilized to trace outgoing calls from the endpoint's handler method. This produces a detailed call tree.
+    *   **Mermaid Sequence Diagram:** The constructed call hierarchy is then translated into a Mermaid sequence diagram, which is displayed in a webview. This provides a visual representation of the runtime execution flow originating from the REST endpoint.
+
+### Technical Details & Architecture:
+
+*   **Language Support:** Primarily TypeScript for the extension logic.
+*   **Diagramming:** Uses Mermaid.js for diagram syntax and rendering.
+*   **AI/LLM Integration:** Leverages VS Code's built-in Language Model Chat API (`vscode.LanguageModelChat`) for tasks like code-to-diagram generation and endpoint disambiguation. An adapter pattern (`ILanguageModelAdapter`) is used to abstract direct LLM interactions for better testability.
+*   **Endpoint Discovery:** Relies on VS Code's Language Server Protocol (LSP) features, specifically `vscode.executeDocumentSymbolProvider` to find classes and methods, and then parses annotations from the source code text to identify REST mappings.
+*   **Call Hierarchy:** Uses `vscode.prepareCallHierarchy` and `vscode.provideOutgoingCalls` (via `vscode.commands.executeCommand`) to build call trees.
+*   **Webviews:** Standard VS Code webview panels are used to display Mermaid diagrams.
+*   **Testing:** The project includes unit tests (focused on isolated logic, aiming to minimize direct `vscode` API dependencies) and E2E tests (validating full command flows within a VS Code test environment).
+    *   Unit tests mock abstracted interfaces for VS Code APIs (`IUri`, `IPosition`, `ICommandExecutor`, `ILogger`, `ILanguageModelAdapter`, etc.).
+    *   E2E tests interact with a live VS Code instance and a fixture project (Java Spring Boot) to test features like endpoint discovery and call hierarchy-based diagram generation.
+
+### Current Status:
+
+*   All core features are implemented.
+*   The test suite (unit and E2E) is passing, ensuring stability and correctness of the implemented functionalities.
+*   Recent debugging efforts have focused on resolving E2E test failures related to endpoint discovery, call hierarchy stubbing, and Mermaid diagram generation, all of which are now resolved.
+
+This project aims to provide developers with powerful tools to quickly understand and navigate complex codebases through intuitive visualizations and AI-assisted analysis.
+
 ## Core Functionality
 
 - The command registration logic uses `@diagram` (participant ID `dive.diagram` in `src/simple.ts`).

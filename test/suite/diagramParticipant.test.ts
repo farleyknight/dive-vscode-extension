@@ -6,16 +6,22 @@ import { EndpointInfo } from '../../src/endpoint-discovery';
 import * as endpointDiscovery from '../../src/endpoint-discovery';
 import * as endpointDisambiguation from '../../src/endpoint-disambiguation';
 import * as callHierarchy from '../../src/call-hierarchy'; // Import the new module
+import { CustomHierarchyNode } from '../../src/call-hierarchy'; // Import type directly
 import * as mermaidTranslator from '../../src/mermaid-sequence-translator'; // Import the new module
+// Abstracted types
+import { IPosition, IUri, IRange, VSCodeSymbolKind, ICallHierarchyItem, ICancellationToken, IExtensionContext, IChatResponseStream } from '../../src/adapters/vscodeTypes';
+import { ILogger } from '../../src/adapters/iLogger'; // Added ILogger
+import { ILanguageModelAdapter } from '../../src/llm/iLanguageModelAdapter'; // Added
+import { toVscodePosition, toVscodeUri, toVscodeRange, toVscodeCallHierarchyItem, fromVscodeCallHierarchyItem } from '../../src/adapters/vscodeUtils';
 
 suite('Diagram Participant - handleRestEndpoint', () => {
     let sandbox: sinon.SinonSandbox;
-    let mockStream: any;
-    let mockLogger: any;
-    let mockLm: any;
-    let mockLmAdapter: any;
-    let mockToken: vscode.CancellationToken;
-    let mockExtensionContext: vscode.ExtensionContext;
+    let mockStream: sinon.SinonStubbedInstance<IChatResponseStream>; // Typed
+    let mockLogger: sinon.SinonStubbedInstance<ILogger>; // Typed
+    let mockLm: any; // Keep as any for simplicity if only request.model is needed
+    let mockLmAdapter: sinon.SinonStubbedInstance<ILanguageModelAdapter>; // Typed
+    let mockToken: ICancellationToken; // Typed
+    let mockExtensionContext: IExtensionContext; // Typed
     let mockContext: vscode.ChatContext;
     let mockRequest: vscode.ChatRequest;
     let buildCallHierarchyTreeStub: sinon.SinonStub;
@@ -64,26 +70,27 @@ suite('Diagram Participant - handleRestEndpoint', () => {
             progress: sandbox.stub(),
             markdown: sandbox.stub(),
             button: sandbox.stub(),
-        };
+        } as sinon.SinonStubbedInstance<IChatResponseStream>;
+
         mockLogger = {
             logUsage: sandbox.stub(),
             logError: sandbox.stub(),
-        };
-        mockLm = {
-            sendRequest: sandbox.stub(),
-        };
-        mockLmAdapter = {
-            sendRequest: sandbox.stub(),
-        };
+            logInfo: sandbox.stub(), // Added
+            logDebug: sandbox.stub(), // Added
+            logWarning: sandbox.stub(), // Added
+        } as sinon.SinonStubbedInstance<ILogger>;
+
+        mockLm = { sendRequest: sandbox.stub() };
+        mockLmAdapter = { sendRequest: sandbox.stub() } as sinon.SinonStubbedInstance<ILanguageModelAdapter>;
+
         mockToken = {
             isCancellationRequested: false,
-            onCancellationRequested: sandbox.stub().returns({ dispose: () => {} }),
-        } as any;
+            onCancellationRequested: sandbox.stub().returns({ dispose: () => {} })
+        };
         mockExtensionContext = {
             subscriptions: [],
-            extensionPath: '/mock/extension/path', // Added for getMermaidWebviewHtml if it uses extensionContext.extensionUri
-            extensionUri: vscode.Uri.file('/mock/extension/path'), // Mock extensionUri
-        } as any;
+            extensionUri: { fsPath: '/mock/extension/path', scheme: 'file' }, // Added scheme for consistency
+        };
         mockContext = {} as any;
         mockRequest = { model: mockLm } as any;
     });
@@ -99,12 +106,12 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         assert.ok((endpointDiscovery.discoverEndpoints as sinon.SinonStub).calledOnce, 'discoverEndpoints should be called');
         assert.ok(buildCallHierarchyTreeStub.notCalled, 'buildCallHierarchyTree should not be called if no endpoints');
         assert.ok(mockStream.markdown.calledWith('No REST endpoints found in the current workspace. Ensure your project uses common annotations like @RestController, @GetMapping, etc.'), 'No endpoints message should be streamed');
-        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] discoverEndpoints', sinon.match({ status: 'no_endpoints_found' })), 'logUsage should indicate no_endpoints_found');
+        assert.ok(mockLogger.logUsage.calledWith('[restEndpoint] discoverEndpoints', sinon.match({ status: 'no_endpoints_found' })), 'logUsage should indicate no_endpoints_found');
     });
 
     test('should handle disambiguation failure', async () => {
-        const fakeUri = vscode.Uri.file('/test/file.java');
-        const fakePosition = new vscode.Position(10, 5);
+        const fakeUri: IUri = { fsPath: '/test/file.java', scheme: 'file' };
+        const fakePosition: IPosition = { line: 10, character: 5 };
         const anEndpoint: EndpointInfo = { uri: fakeUri, position: fakePosition, path: '/api/some', method: 'GET', handlerMethodName: 'getSome', startLine: 9, endLine: 15 };
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([anEndpoint]);
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(undefined);
@@ -112,21 +119,33 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         await handleRestEndpoint(params, 'show a very ambiguous endpoint');
         assert.ok((endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).calledOnce, 'disambiguateEndpoint should be called');
         assert.ok(buildCallHierarchyTreeStub.notCalled, 'buildCallHierarchyTree should not be called if disambiguation fails');
-        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] disambiguateEndpoint', sinon.match({ status: 'no_target_endpoint' })), 'logUsage should indicate no_target_endpoint');
+        assert.ok(mockLogger.logUsage.calledWith('[restEndpoint] disambiguateEndpoint', sinon.match({ status: 'no_target_endpoint' })), 'logUsage should indicate no_target_endpoint');
     });
 
     // New tests for handleRestEndpoint's interaction with buildCallHierarchyTree
     test('should call buildCallHierarchyTree and display diagram if tree is built', async () => {
-        const fakeUri = vscode.Uri.file('/test/Controller.java');
-        const fakePosition = new vscode.Position(15, 10);
+        const fakeUri: IUri = { fsPath: '/test/Controller.java', scheme: 'file' };
+        const fakePosition: IPosition = { line: 15, character: 10 };
         const targetEndpoint: EndpointInfo = { uri: fakeUri, position: fakePosition, path: '/api/data', method: 'GET', handlerMethodName: 'getData', startLine: 14, endLine: 20 };
-        const mockCallHierarchyItem: vscode.CallHierarchyItem = new vscode.CallHierarchyItem(vscode.SymbolKind.Method, 'getData', 'detail', fakeUri, new vscode.Range(14,0,20,1), new vscode.Range(15,10,15,17));
-        const mockHierarchyRoot: callHierarchy.CustomHierarchyNode = { item: mockCallHierarchyItem, children: [], parents: [] };
+
+        // Define mock hierarchy item using abstract types
+        const mockHierarchyItemData: ICallHierarchyItem = {
+            name: 'getData',
+            kind: VSCodeSymbolKind.Method,
+            uri: fakeUri,
+            range: { start: { line: 14, character: 0 }, end: { line: 20, character: 1 } },
+            selectionRange: { start: { line: 15, character: 10 }, end: { line: 15, character: 17 } },
+            detail: 'detail'
+        };
+        const mockVscodeHierarchyItem = toVscodeCallHierarchyItem(mockHierarchyItemData);
+        // CustomHierarchyNode still expects vscode.CallHierarchyItem
+        const mockHierarchyRoot: CustomHierarchyNode = { item: mockVscodeHierarchyItem, children: [], parents: [] };
         const fakeMermaidSyntax = 'sequenceDiagram\n    participant A\n    A->>B: test';
 
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([targetEndpoint]);
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(targetEndpoint);
-        buildCallHierarchyTreeStub.withArgs(sinon.match.any, fakeUri, fakePosition, sinon.match.any, sinon.match.any).resolves(mockHierarchyRoot);
+        // Stub buildCallHierarchyTree to expect the IUri/IPosition/ICancellationToken passed from handleRestEndpoint
+        buildCallHierarchyTreeStub.withArgs(sinon.match.any, fakeUri, fakePosition, mockLogger, mockToken).resolves(mockHierarchyRoot);
         generateMermaidSequenceDiagramStub.withArgs(mockHierarchyRoot).returns(fakeMermaidSyntax);
 
         // We need to ensure that the local validateMermaidSyntax function within diagramParticipant.ts would return true.
@@ -136,9 +155,10 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
-        assert.ok(buildCallHierarchyTreeStub.calledOnceWith(sinon.match.any, fakeUri, fakePosition, mockLogger, mockToken), 'buildCallHierarchyTree should be called with correct args');
+        // Assert buildCallHierarchyTree called with abstract types
+        assert.ok(buildCallHierarchyTreeStub.calledOnceWith(sinon.match.any, fakeUri, fakePosition, mockLogger, mockToken), 'buildCallHierarchyTree should be called with correct IUri/IPosition/ICancellationToken args');
         assert.ok(generateMermaidSequenceDiagramStub.calledOnceWith(mockHierarchyRoot), 'generateMermaidSequenceDiagramStub should be called with the hierarchy root');
-        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] buildCallHierarchyTree', sinon.match({ status: 'success' })), 'Log should indicate buildCallHierarchyTree success status');
+        assert.ok(mockLogger.logUsage.calledWith('[restEndpoint] buildCallHierarchyTree', sinon.match({ status: 'success' })), 'Log should indicate buildCallHierarchyTree success status');
         assert.ok(mockStream.progress.calledWith('Generating sequence diagram...'), 'Progress should indicate diagram generation');
 
         // Check that createWebviewPanel was called, which implies createAndShowDiagramWebview was invoked and validation (implicitly) passed.
@@ -146,41 +166,41 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         // Verify some key parameters passed to createWebviewPanel if needed
         const panelArgs = createWebviewPanelStub.firstCall.args;
         assert.strictEqual(panelArgs[0], 'restEndpointSequenceDiagram', 'Panel ID is incorrect');
-        assert.strictEqual(panelArgs[1], 'Sequence: GET /api/data', 'Panel title is incorrect');
+        assert.strictEqual(panelArgs[1], 'Sequence: getData', 'Panel title is incorrect');
 
         // Ensure no old success markdown message is sent
         assert.ok(mockStream.markdown.neverCalledWith(sinon.match(/Successfully built call hierarchy for getData/)), 'Old success markdown should not be called');
     });
 
     test('should handle buildCallHierarchyTree returning null', async () => {
-        const fakeUri = vscode.Uri.file('/test/Controller.java');
-        const fakePosition = new vscode.Position(15, 10);
+        const fakeUri: IUri = { fsPath: '/test/Controller.java', scheme: 'file' };
+        const fakePosition: IPosition = { line: 15, character: 10 };
         const targetEndpoint: EndpointInfo = { uri: fakeUri, position: fakePosition, path: '/api/data', method: 'GET', handlerMethodName: 'getData', startLine: 14, endLine: 20 };
 
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([targetEndpoint]);
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(targetEndpoint);
-        buildCallHierarchyTreeStub.resolves(null);
+        buildCallHierarchyTreeStub.withArgs(sinon.match.any, fakeUri, fakePosition, mockLogger, mockToken).resolves(null);
 
         const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnce, 'buildCallHierarchyTree should be called');
         assert.ok(mockStream.markdown.calledWith('Could not build the call hierarchy for the selected endpoint. The endpoint might not have any outgoing calls or there might have been an issue processing it.'), 'Markdown should report failure');
-        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] buildCallHierarchyTree', sinon.match({ status: 'no_root' })), 'Log should indicate no_root status');
+        assert.ok(mockLogger.logUsage.calledWith('[restEndpoint] buildCallHierarchyTree', sinon.match({ status: 'no_root' })), 'Log should indicate no_root status');
     });
 
     // Cancellation test (optional, but good if your buildCallHierarchyTree handles cancellation actively)
     test('should log cancellation if token is cancelled during buildCallHierarchyTree', async () => {
-        const fakeUri = vscode.Uri.file('/test/Controller.java');
-        const fakePosition = new vscode.Position(15, 10);
+        const fakeUri: IUri = { fsPath: '/test/Controller.java', scheme: 'file' };
+        const fakePosition: IPosition = { line: 15, character: 10 };
         const targetEndpoint: EndpointInfo = { uri: fakeUri, position: fakePosition, path: '/api/data', method: 'GET', handlerMethodName: 'getData', startLine: 14, endLine: 20 };
 
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([targetEndpoint]);
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(targetEndpoint);
 
         // Simulate cancellation *after* buildCallHierarchyTree is called but *before* it would resolve
-        buildCallHierarchyTreeStub.callsFake(async (commandExecutor: any, uri: any, position: any, logger: any, tokenArg: any) => {
-            tokenArg.isCancellationRequested = true; // Simulate cancellation
+        buildCallHierarchyTreeStub.callsFake(async (commandExecutor, uri, position, logger, tokenArg) => {
+            tokenArg.isCancellationRequested = true; // Simulate cancellation via the interface
             return null;
         });
 
@@ -188,7 +208,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnce, 'buildCallHierarchyTree should be called');
-        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] buildCallHierarchyTree', sinon.match({ status: 'cancelled' })), 'Log should indicate cancellation during build');
+        assert.ok(mockLogger.logUsage.calledWith('[restEndpoint] buildCallHierarchyTree', sinon.match({ status: 'cancelled' })), 'Log should indicate cancellation during build');
     });
 
 });

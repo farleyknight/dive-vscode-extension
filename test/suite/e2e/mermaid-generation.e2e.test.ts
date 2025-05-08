@@ -9,6 +9,8 @@ import * as endpointDiscovery from '../../../src/endpoint-discovery';
 import * as endpointDisambiguation from '../../../src/endpoint-disambiguation';
 import * as callHierarchy from '../../../src/call-hierarchy';
 import { CustomHierarchyNode } from '../../../src/call-hierarchy';
+import { IPosition, IUri } from '../../../src/adapters/vscodeTypes';
+import { fromVscodePosition, fromVscodeUri } from '../../../src/adapters/vscodeUtils';
 
 const lspInitializationDelay = 10000; // From other E2E tests
 
@@ -51,9 +53,9 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
     test('Should generate a Mermaid diagram for TestController.sayHello', async () => {
         assert.ok(vscode.workspace.workspaceFolders, "[E2E Test] No workspace folder found.");
         const workspaceRootUri = vscode.workspace.workspaceFolders![0].uri;
-        const javaFixtureUri = vscode.Uri.joinPath(workspaceRootUri, fixtureRelativePath);
+        const javaFixtureVsCodeUri = vscode.Uri.joinPath(workspaceRootUri, fixtureRelativePath);
 
-        const document = await vscode.workspace.openTextDocument(javaFixtureUri);
+        const document = await vscode.workspace.openTextDocument(javaFixtureVsCodeUri);
         await vscode.window.showTextDocument(document);
 
         console.log('[E2E Mermaid] Waiting for LSP initialization...');
@@ -64,11 +66,15 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
         const endpointName = 'sayHello';
         const endpointLine = 15; // 0-indexed
         const endpointChar = 19; // 0-indexed for 'sayHello'
-        const endpointPosition = new vscode.Position(endpointLine, endpointChar);
+        const endpointVsCodePosition = new vscode.Position(endpointLine, endpointChar);
+
+        // Convert to IUri and IPosition for EndpointInfo
+        const targetIUri: IUri = fromVscodeUri(javaFixtureVsCodeUri);
+        const targetIPosition: IPosition = fromVscodePosition(endpointVsCodePosition);
 
         const targetEndpointInfo: EndpointInfo = {
-            uri: javaFixtureUri,
-            position: endpointPosition,
+            uri: targetIUri,
+            position: targetIPosition,
             path: '/api/test/hello',
             method: 'GET',
             handlerMethodName: endpointName,
@@ -83,12 +89,16 @@ suite('E2E Test Suite - Mermaid Diagram Generation for /restEndpoint', () => {
         const mockCallHierarchyItem: vscode.CallHierarchyItem = {
             name: endpointName,
             kind: vscode.SymbolKind.Method,
-            uri: javaFixtureUri,
-            range: new vscode.Range(endpointPosition, endpointPosition.translate(0, endpointName.length)),
-            selectionRange: new vscode.Range(endpointPosition, endpointPosition.translate(0, endpointName.length)),
+            uri: javaFixtureVsCodeUri,
+            range: new vscode.Range(endpointVsCodePosition, endpointVsCodePosition.translate(0, endpointName.length)),
+            selectionRange: new vscode.Range(endpointVsCodePosition, endpointVsCodePosition.translate(0, endpointName.length)),
             detail: 'com.example.testfixture.TestController'
         };
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', javaFixtureUri, endpointPosition).resolves([mockCallHierarchyItem]);
+        executeCommandStub.withArgs(
+            'vscode.prepareCallHierarchy',
+            sinon.match({ fsPath: javaFixtureVsCodeUri.fsPath }), // Match URI by fsPath
+            sinon.match({ line: endpointVsCodePosition.line, character: endpointVsCodePosition.character }) // Match position by line and character
+        ).resolves([mockCallHierarchyItem]);
 
         // Mock for vscode.provideOutgoingCalls (called by buildCallHierarchyTree)
         // sayHello makes no outgoing calls in this fixture.

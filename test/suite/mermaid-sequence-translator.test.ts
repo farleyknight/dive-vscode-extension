@@ -1,5 +1,4 @@
 import * as assert from 'assert';
-import * as vscode from 'vscode';
 import {
     generateMermaidSequenceDiagram,
     getParticipantName,
@@ -7,6 +6,8 @@ import {
     // escapeMermaidMessage // Add if tests for it are un-commented
 } from '../../src/mermaid-sequence-translator';
 import { CustomHierarchyNode } from '../../src/call-hierarchy'; // Assuming path
+import { ICallHierarchyItem, VSCodeSymbolKind, IUri, IRange, IPosition } from '../../src/adapters/vscodeTypes';
+import { toVscodeCallHierarchyItem } from '../../src/adapters/vscodeUtils';
 
 // Helper to access internal functions if they are not exported
 // This is a bit of a hack; ideally, these would be tested directly if exported,
@@ -23,14 +24,14 @@ suite('MermaidSequenceTranslator', () => {
         });
 
         test('should return a diagram indicating no outgoing calls if rootNode has no children', () => {
-            const rootItem: vscode.CallHierarchyItem = {
+            const mockRootData: ICallHierarchyItem = {
                 name: 'mainFunction',
-                kind: vscode.SymbolKind.Function,
-                uri: vscode.Uri.file('test.ts'),
-                range: new vscode.Range(0, 0, 0, 0),
-                selectionRange: new vscode.Range(0, 0, 0, 0)
+                kind: VSCodeSymbolKind.Function,
+                uri: { fsPath: 'test.ts' },
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                selectionRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }
             };
-            const rootNode: CustomHierarchyNode = { item: rootItem, children: [], parents: [] };
+            const rootNode: CustomHierarchyNode = { item: toVscodeCallHierarchyItem(mockRootData), children: [], parents: [] };
             const expectedDiagram = 'sequenceDiagram\n    participant mainFunction\n    mainFunction->>mainFunction: No outgoing calls found to diagram.';
             // Note: sanitizeParticipantName will be implicitly tested here.
             // If mainFunction needs sanitization, the expected participant name should reflect that.
@@ -39,24 +40,24 @@ suite('MermaidSequenceTranslator', () => {
         });
 
         test('should generate a diagram for a simple parent-child relationship', () => {
-            const parentItem: vscode.CallHierarchyItem = {
+            const mockParentData: ICallHierarchyItem = {
                 name: 'ParentClass.parentMethod',
-                kind: vscode.SymbolKind.Method,
-                uri: vscode.Uri.file('test.java'),
-                range: new vscode.Range(0, 0, 0, 0),
-                selectionRange: new vscode.Range(0, 0, 0, 0),
+                kind: VSCodeSymbolKind.Method,
+                uri: { fsPath: 'test.java' },
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                selectionRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
                 detail: 'com.example.ParentClass'
             };
-            const childItem: vscode.CallHierarchyItem = {
+            const mockChildData: ICallHierarchyItem = {
                 name: 'childMethod',
-                kind: vscode.SymbolKind.Method,
-                uri: vscode.Uri.file('test.java'),
-                range: new vscode.Range(1, 0, 1, 0),
-                selectionRange: new vscode.Range(1, 0, 1, 0),
+                kind: VSCodeSymbolKind.Method,
+                uri: { fsPath: 'test.java' },
+                range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+                selectionRange: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
                 detail: 'com.example.ChildClass'
             };
-            const childNode: CustomHierarchyNode = { item: childItem, children: [], parents: [] };
-            const parentNode: CustomHierarchyNode = { item: parentItem, children: [childNode], parents: [] };
+            const childNode: CustomHierarchyNode = { item: toVscodeCallHierarchyItem(mockChildData), children: [], parents: [] };
+            const parentNode: CustomHierarchyNode = { item: toVscodeCallHierarchyItem(mockParentData), children: [childNode], parents: [] };
 
             // Expected names after getParticipantName and sanitizeParticipantName
             // Parent: ParentClass.parentMethod (sanitized if needed, but seems ok)
@@ -88,55 +89,60 @@ suite('MermaidSequenceTranslator', () => {
 
     suite('getParticipantName', () => {
         test('should return item.name if no detail or class-like structure', () => {
-            const item: vscode.CallHierarchyItem = {
+            const item: ICallHierarchyItem = {
                 name: 'simpleFunction',
-                kind: vscode.SymbolKind.Function,
-                uri: vscode.Uri.file('test.ts'),
-                range: new vscode.Range(0,0,0,0), selectionRange: new vscode.Range(0,0,0,0)
+                kind: VSCodeSymbolKind.Function,
+                uri: { fsPath: 'test.ts' },
+                range: { start: {line: 0, character: 0}, end: {line: 0, character: 0}},
+                selectionRange: { start: {line: 0, character: 0}, end: {line: 0, character: 0}}
             };
             assert.strictEqual(getParticipantName(item), 'simpleFunction');
         });
 
         test('should use detail to form Class.methodName', () => {
-            const item: vscode.CallHierarchyItem = {
+            const item: ICallHierarchyItem = {
                 name: 'myMethod',
-                kind: vscode.SymbolKind.Method,
+                kind: VSCodeSymbolKind.Method,
                 detail: 'com.example.MyClass',
-                uri: vscode.Uri.file('test.java'),
-                range: new vscode.Range(0,0,0,0), selectionRange: new vscode.Range(0,0,0,0)
+                uri: { fsPath: 'test.java' },
+                range: { start: {line: 0, character: 0}, end: {line: 0, character: 0}},
+                selectionRange: { start: {line: 0, character: 0}, end: {line: 0, character: 0}}
             };
             assert.strictEqual(getParticipantName(item), 'MyClass.myMethod');
         });
 
         test('should handle detail with / separators', () => {
-            const item: vscode.CallHierarchyItem = {
+            const item: ICallHierarchyItem = {
                 name: 'anotherMethod',
-                kind: vscode.SymbolKind.Method,
+                kind: VSCodeSymbolKind.Method,
                 detail: 'com/example/another/AnotherClass',
-                uri: vscode.Uri.file('test.java'),
-                range: new vscode.Range(0,0,0,0), selectionRange: new vscode.Range(0,0,0,0)
+                uri: { fsPath: 'test.java' },
+                range: { start: {line: 0, character: 0}, end: {line: 0, character: 0}},
+                selectionRange: { start: {line: 0, character: 0}, end: {line: 0, character: 0}}
             };
             assert.strictEqual(getParticipantName(item), 'AnotherClass.anotherMethod');
         });
 
         test('should not prepend detail if item.name already contains it', () => {
-            const item: vscode.CallHierarchyItem = {
+            const item: ICallHierarchyItem = {
                 name: 'MyClass.myMethod',
-                kind: vscode.SymbolKind.Method,
+                kind: VSCodeSymbolKind.Method,
                 detail: 'com.example.MyClass',
-                uri: vscode.Uri.file('test.java'),
-                range: new vscode.Range(0,0,0,0), selectionRange: new vscode.Range(0,0,0,0)
+                uri: { fsPath: 'test.java' },
+                range: { start: {line: 0, character: 0}, end: {line: 0, character: 0}},
+                selectionRange: { start: {line: 0, character: 0}, end: {line: 0, character: 0}}
             };
             assert.strictEqual(getParticipantName(item), 'MyClass.myMethod');
         });
 
          test('should use item.name if detail is the same as item.name (heuristic check)', () => {
-            const item: vscode.CallHierarchyItem = {
+            const item: ICallHierarchyItem = {
                 name: 'constructor',
-                kind: vscode.SymbolKind.Constructor,
+                kind: VSCodeSymbolKind.Constructor,
                 detail: 'constructor', // e.g. Python __init__ might appear this way
-                uri: vscode.Uri.file('test.py'),
-                range: new vscode.Range(0,0,0,0), selectionRange: new vscode.Range(0,0,0,0)
+                uri: { fsPath: 'test.py' },
+                range: { start: {line: 0, character: 0}, end: {line: 0, character: 0}},
+                selectionRange: { start: {line: 0, character: 0}, end: {line: 0, character: 0}}
             };
             assert.strictEqual(getParticipantName(item), 'constructor');
         });

@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path'; // For logging, if needed
 import { ICommandExecutor } from './adapters/vscodeExecution';
+import { IPosition, IUri, ICancellationToken } from './adapters/vscodeTypes'; // Removed ILogger from here
+import { ILogger } from './adapters/iLogger'; // Added ILogger import from correct path
+import { toVscodePosition, toVscodeUri } from './adapters/vscodeUtils'; // Added
 
 // Define our custom node structure for the call hierarchy
 export interface CustomHierarchyNode {
@@ -26,10 +29,10 @@ function getCallHierarchyItemUniqueId(item: vscode.CallHierarchyItem): string {
  */
 async function prepareInitialCallHierarchyItem(
     commandExecutor: ICommandExecutor,
-    uri: vscode.Uri,
-    position: vscode.Position,
-    token: vscode.CancellationToken,
-    logger: vscode.TelemetryLogger
+    uri: IUri, // Changed from vscode.Uri
+    position: IPosition, // Changed from vscode.Position
+    token: ICancellationToken, // Changed
+    logger: ILogger // Changed from vscode.TelemetryLogger
 ): Promise<vscode.CallHierarchyItem | null> {
     if (token.isCancellationRequested) {
         logger.logUsage('prepareInitialCallHierarchyItem', { status: 'cancelled_before_prepare' });
@@ -38,8 +41,8 @@ async function prepareInitialCallHierarchyItem(
     try {
         const initialItems = await commandExecutor.executeCommand<vscode.CallHierarchyItem[]>(
             'vscode.prepareCallHierarchy',
-            uri,
-            position
+            toVscodeUri(uri), // Changed: Convert IUri to vscode.Uri
+            toVscodePosition(position) // Changed: Convert IPosition to vscode.Position
         );
         if (initialItems && initialItems.length > 0) {
             logger.logUsage('prepareInitialCallHierarchyItem', { status: 'success', itemCount: initialItems.length });
@@ -59,11 +62,11 @@ async function prepareInitialCallHierarchyItem(
 async function fetchOutgoingCalls(
     commandExecutor: ICommandExecutor,
     item: vscode.CallHierarchyItem,
-    token: vscode.CancellationToken,
-    logger: vscode.TelemetryLogger
+    token: ICancellationToken, // Added token
+    logger: ILogger // Changed from vscode.TelemetryLogger
 ): Promise<vscode.CallHierarchyOutgoingCall[]> {
     if (token.isCancellationRequested) {
-        logger.logUsage('fetchOutgoingCalls', { status: 'cancelled_before_fetch', itemName: item.name });
+        logger.logUsage('fetchOutgoingCalls', { itemName: item.name, status: 'cancelled_entry' });
         return [];
     }
     try {
@@ -76,7 +79,7 @@ async function fetchOutgoingCalls(
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.logError(error instanceof Error ? error : new Error(String(error)), { stage: 'fetchOutgoingCalls', itemName: item.name, message: errorMessage });
-        logger.logUsage('fetchOutgoingCalls', { status: 'error', itemName: item.name, error: errorMessage });
+        logger.logUsage('fetchOutgoingCalls', { itemName: item.name, status: 'error', error: errorMessage });
         return [];
     }
 }
@@ -87,8 +90,8 @@ async function expandOutgoingCallsRecursive(
     currentNode: CustomHierarchyNode,
     depth: number,
     visitedIds: Set<string>,
-    token: vscode.CancellationToken,
-    logger: vscode.TelemetryLogger
+    token: ICancellationToken, // Changed
+    logger: ILogger // Changed from vscode.TelemetryLogger
 ): Promise<void> {
     const itemId = getCallHierarchyItemUniqueId(currentNode.item);
 
@@ -159,10 +162,10 @@ async function expandOutgoingCallsRecursive(
  */
 export async function buildCallHierarchyTree(
     commandExecutor: ICommandExecutor,
-    uri: vscode.Uri,
-    position: vscode.Position,
-    logger: vscode.TelemetryLogger,
-    token: vscode.CancellationToken
+    uri: IUri, // Changed from vscode.Uri
+    position: IPosition, // Changed from vscode.Position
+    logger: ILogger, // Changed from vscode.TelemetryLogger
+    token: ICancellationToken // Changed
 ): Promise<CustomHierarchyNode | null> {
     logger.logUsage('buildCallHierarchyTree', { status: 'started' });
 

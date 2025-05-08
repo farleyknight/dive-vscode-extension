@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { basename } from 'path'; // Specifically import basename
 import { EndpointInfo } from './endpoint-discovery'; // Assuming EndpointInfo will remain in endpoint-discovery.ts or be moved to a shared types file
 import { ILanguageModelAdapter, LanguageModelAdapterChatMessage, LanguageModelAdapterChatRole } from './llm/iLanguageModelAdapter'; // Added import
+import { IChatResponseStream, ICancellationToken } from './adapters/vscodeTypes'; // Added IChatResponseStream and ICancellationToken
+import { ILogger } from './adapters/iLogger'; // Added ILogger import
 
 /**
  * Placeholder for endpoint disambiguation logic.
@@ -11,10 +13,10 @@ import { ILanguageModelAdapter, LanguageModelAdapterChatMessage, LanguageModelAd
 export async function disambiguateEndpoint(
     query: string,
     endpoints: EndpointInfo[],
-    stream: vscode.ChatResponseStream, // stream is kept for messages, but not for quick pick
-    token: vscode.CancellationToken,
+    stream: IChatResponseStream, // Changed from vscode.ChatResponseStream
+    token: ICancellationToken, // Changed from vscode.CancellationToken
     lmAdapter: ILanguageModelAdapter, // Changed from lm: vscode.LanguageModelChat
-    logger: vscode.TelemetryLogger
+    logger: ILogger // Changed from vscode.TelemetryLogger to ILogger
 ): Promise<EndpointInfo | null> {
     console.log(`[disambiguateEndpoint] Entry - Query: "${query}", Endpoints: ${endpoints.length}`); // DEBUG
     if (token.isCancellationRequested) {

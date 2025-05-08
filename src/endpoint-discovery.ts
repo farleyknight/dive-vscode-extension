@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { TextDecoder } from 'util'; // Node.js util
+import { IUri, IPosition, IRange, ICancellationToken } from './adapters/vscodeTypes'; // Import our interfaces
+import { toIUri, toIPosition, toIRange, fromIUri, fromIPosition, fromIRange } from './adapters/vscodeUtils'; // Import conversion functions
 
 /**
  * Represents information about a discovered REST endpoint.
@@ -7,12 +9,16 @@ import { TextDecoder } from 'util'; // Node.js util
 export interface EndpointInfo {
     method: string; // e.g., 'GET', 'POST'
     path: string; // e.g., '/api/users', '/api/users/{id}'
-    uri: vscode.Uri; // File URI
-    position: vscode.Position; // Position of the method *name* (for navigation, LSP interactions)
+    uri: IUri; // Changed from vscode.Uri
+    position: IPosition; // Changed from vscode.Position - position of method name
     handlerMethodName: string; // Name of the Java method handling the endpoint
     description?: string; // Optional description from Javadoc/comments
     startLine: number; // 0-indexed, actual start line of the mapping annotation
-    endLine: number;   // 0-indexed, end of method body (`methodSymbol.range.end.line`)
+    endLine: number;   // 0-indexed, end of method body
+    // Note: If EndpointInfo previously used a full vscode.Range for something,
+    // and IPosition is not enough, we might need to add an IRange field here.
+    // For now, assuming `position` refers to a single point (like start of method name)
+    // and `startLine`/`endLine` cover the broader span if needed for other purposes.
 }
 
 /**
@@ -247,21 +253,15 @@ export function combinePaths(basePath: string, methodPath: string): string {
     const normMethod = normalizePath(methodPath);
 
     if (normBase === '/') {
-        // If base is just root, the method path (already normalized) is the full path.
-        // If normMethod is also just '/', result is '/'. If normMethod is empty, result is '/'.
-        return normMethod === '' ? '/' : normMethod;
+        return normMethod || '/'; // If base is root, use method path (or root if method is empty)
+    }
+    if (normMethod === '/' || normMethod === '') {
+        return normBase || '/'; // If method is root or empty, use base path (or root if base is empty)
     }
 
-    // If method path is empty or just root, the base path (already normalized) is the full path.
-    if (normMethod === '' || normMethod === '/') {
-        // If normBase is also empty (e.g. from an empty input string), result is '/'.
-        return normBase === '' ? '/' : normBase;
-    }
-
-    // Standard case: normBase is not '/' and normMethod is not '/' or empty.
-    // normBase will be like '/api' and normMethod like '/users'.
-    // Result should be '/api/users'.
-    return `${normBase}${normMethod}`;
+    // Ensure no double slashes when combining non-root paths
+    const methodPart = normMethod.startsWith('/') ? normMethod.substring(1) : normMethod;
+    return `${normBase}/${methodPart}`;
 }
 
 /**
@@ -299,94 +299,93 @@ function internalFindControllerClassesLogic(
     simpleSymbols: SimpleDocumentSymbolData[]
 ): { classSymbolData: SimpleDocumentSymbolData; basePath: string }[] {
     const controllers: { classSymbolData: SimpleDocumentSymbolData; basePath: string }[] = [];
-    const potentialControllerSymbols = simpleSymbols.filter(symbol => symbol.kind === 4 /* Class */);
-
-    for (const classSymbolData of potentialControllerSymbols) {
-        const classRange = classSymbolData.range;
-        const classAnnotationStartLine = Math.max(0, classRange.start.line - 5);
-        // Define the range using SimplePosition/SimpleRange
-        const classAnnotationRange: SimpleRange = {
-            start: { line: classAnnotationStartLine, character: 0 },
-            end: { line: classSymbolData.selectionRange.start.line + 1, character: 0 }
-        };
-        const classAnnotationText = simpleDoc.getText(classAnnotationRange);
-
-        // Call the pure helper using the text
-        const details = getControllerDetailsFromClassAnnotationText(classAnnotationText);
-
-        if (details.isController) {
-            controllers.push({
-                classSymbolData: classSymbolData,
-                basePath: details.basePath,
-                // isRestController flag is handled by the caller if needed based on the original vscode.DocumentSymbol
+    for (const symbol of simpleSymbols) {
+        if (symbol.kind === vscode.SymbolKind.Class) {
+            const classAnnotationText = simpleDoc.getText({
+                start: { line: symbol.range.start.line, character: 0 },
+                // Read a bit more to catch annotations that might be on separate lines before class declaration
+                // or be multi-line. This might need adjustment.
+                end: { line: symbol.selectionRange.start.line + 1, character: 0 }
             });
+            const controllerDetails = getControllerDetailsFromClassAnnotationText(classAnnotationText);
+            if (controllerDetails.isController) {
+                controllers.push({ classSymbolData: symbol, basePath: controllerDetails.basePath });
+            }
         }
+        // Recursively search in children if structure allows (e.g. namespaces/modules)
+        // However, for Java, controllers are typically top-level classes or nested if supported by framework.
+        // For now, not recursing here for controllers, assuming they are found at the level `simpleSymbols` represents.
     }
     return controllers;
+}
+
+/**
+ * Converts a single vscode.DocumentSymbol to SimpleDocumentSymbolData
+ */
+function convertSingleSymbol(s: vscode.DocumentSymbol): SimpleDocumentSymbolData {
+    return {
+        name: s.name,
+        kind: s.kind,
+        range: {
+            start: { line: s.range.start.line, character: s.range.start.character },
+            end: { line: s.range.end.line, character: s.range.end.character }
+        },
+        selectionRange: {
+            start: { line: s.selectionRange.start.line, character: s.selectionRange.start.character },
+            end: { line: s.selectionRange.end.line, character: s.selectionRange.end.character }
+        },
+        children: (s.children || []).map(convertSingleSymbol) // Recursively convert children
+    };
+}
+
+/**
+ * Converts vscode.DocumentSymbol[] to SimpleDocumentSymbolData[]
+ */
+function convertSymbols(vscodeSymbols: vscode.DocumentSymbol[]): SimpleDocumentSymbolData[] {
+    return vscodeSymbols.map(convertSingleSymbol);
 }
 
 /**
  * Finds potential Spring controller classes within a document using symbols and annotation checks.
  * (Wrapper around internal logic function)
  */
-export async function findControllerClasses(document: vscode.TextDocument, symbols: vscode.DocumentSymbol[]): Promise<PotentialController[]> {
-    // 1. Convert vscode types to simple data structures
-    const simpleDoc: SimpleTextDocumentData = {
-        uriFsPath: document.uri.fsPath,
-        getText: (range?: SimpleRange) => {
-            if (!range) return document.getText();
-            const vscodeRange = new vscode.Range(
-                new vscode.Position(range.start.line, range.start.character),
-                new vscode.Position(range.end.line, range.end.character)
-            );
-            return document.getText(vscodeRange);
-        }
-        // Add lineCount/lineAt if internalFindControllerClassesLogic needs them
-    };
+export async function findControllerClasses(
+    document: vscode.TextDocument,
+    symbols: vscode.DocumentSymbol[]
+): Promise<PotentialController[]> {
+    const potentialControllers: PotentialController[] = [];
 
-    function convertSymbols(vscodeSymbols: vscode.DocumentSymbol[]): SimpleDocumentSymbolData[] {
-        return vscodeSymbols.map(s => ({
-            name: s.name,
-            kind: s.kind, // Pass the number directly
-            range: { // Convert vscode.Range
-                start: { line: s.range.start.line, character: s.range.start.character },
-                end: { line: s.range.end.line, character: s.range.end.character }
-            },
-            selectionRange: { // Convert vscode.Range
-                start: { line: s.selectionRange.start.line, character: s.selectionRange.start.character },
-                end: { line: s.selectionRange.end.line, character: s.selectionRange.end.character }
-            },
-            children: convertSymbols(s.children || []) // Recursively convert children
-        }));
-    }
-    const simpleSymbols = convertSymbols(symbols);
+    function findRecursively(currentSymbols: vscode.DocumentSymbol[]) {
+        for (const symbol of currentSymbols) {
+            if (symbol.kind === vscode.SymbolKind.Class) {
+                const classStartLine = symbol.range.start.line;
+                const lookAboveLines = 5;
+                const annotationScanStartLine = Math.max(0, classStartLine - lookAboveLines);
 
-    // 2. Call the internal logic function
-    const internalResult = internalFindControllerClassesLogic(simpleDoc, simpleSymbols);
+                const rangeForAnnotations = new vscode.Range(
+                    new vscode.Position(annotationScanStartLine, 0),
+                    symbol.selectionRange.start
+                );
+                const classAnnotationsText = document.getText(rangeForAnnotations);
 
-    // 3. Convert result back to PotentialController[] which includes the original vscode.DocumentSymbol
-    // We need a way to map back from simpleSymbolData to the original vscode.DocumentSymbol.
-    // This might require passing the original symbols alongside the simple ones or using a map.
-    // Let's adjust internalFindControllerClassesLogic to return enough info, maybe just name/range?
-    // Or, keep it simple for now: find the matching vscode.DocumentSymbol by name/range after getting result.
-    const finalControllers: PotentialController[] = [];
-    const symbolMap = new Map(symbols.map(s => [s.name + s.range.start.line, s])); // Simple map by name+line
+                const controllerDetails = getControllerDetailsFromClassAnnotationText(classAnnotationsText);
 
-    for (const item of internalResult) {
-        const key = item.classSymbolData.name + item.classSymbolData.range.start.line;
-        const originalSymbol = symbolMap.get(key);
-        if (originalSymbol) {
-            finalControllers.push({
-                classSymbol: originalSymbol,
-                basePath: item.basePath,
-                isRestController: true // Matches original logic's output for @Controller/@RestController
-            });
-        } else {
-             console.warn(`[findControllerClasses] Could not map internal result back to original symbol: ${item.classSymbolData.name}`);
+                if (controllerDetails.isController) {
+                    potentialControllers.push({
+                        classSymbol: symbol,
+                        basePath: controllerDetails.basePath,
+                        isRestController: /@RestController/.test(classAnnotationsText)
+                    });
+                }
+            }
+            if (symbol.children && symbol.children.length > 0) {
+                findRecursively(symbol.children);
+            }
         }
     }
 
-    return finalControllers;
+    findRecursively(symbols);
+    return potentialControllers;
 }
 
 /**
@@ -434,28 +433,32 @@ interface ExtendedProcessedMethodEndpoint { // Existing, but to be populated fro
 export function processMethodAnnotationsAndCreateEndpoints(
     params: MethodProcessingParams
 ): ProcessedAnnotationDetails[] {
-    const processedDetailsList: ProcessedAnnotationDetails[] = [];
-    const methodMappingInfo = parseMappingAnnotations(params.methodAnnotationText);
+    const parsedAnnotation = parseMappingAnnotations(params.methodAnnotationText);
+    if (!parsedAnnotation || !parsedAnnotation.httpMethod || parsedAnnotation.paths.length === 0) {
+        return [];
+    }
 
-    if (methodMappingInfo && methodMappingInfo.httpMethod && methodMappingInfo.paths.length > 0) {
-        let actualAnnotationGlobalStartLine = params.annotationBlockStartLine; // Default if no index
-        if (methodMappingInfo.annotationStartIndex !== undefined) {
-            const textBeforeAnnotation = params.methodAnnotationText.substring(0, methodMappingInfo.annotationStartIndex!);
-            const newlinesBeforeAnnotation = (textBeforeAnnotation.match(/\n/g) || []).length;
-            actualAnnotationGlobalStartLine = params.annotationBlockStartLine + newlinesBeforeAnnotation;
-        }
+    // Calculate the global start line of the specific annotation found
+    // params.annotationBlockStartLine is the start of the text block searched
+    // parsedAnnotation.annotationStartIndex is the index *within* that block
+    // We need to count newlines from annotationBlockStartLine up to annotationStartIndex
+    let actualAnnotationLineOffset = 0;
+    if (parsedAnnotation.annotationStartIndex !== undefined) {
+        const textBeforeAnnotation = params.methodAnnotationText.substring(0, parsedAnnotation.annotationStartIndex);
+        actualAnnotationLineOffset = (textBeforeAnnotation.match(/\n/g) || []).length;
+    }
+    const actualAnnotationGlobalStartLine = params.annotationBlockStartLine + actualAnnotationLineOffset;
 
-        // No path combination here yet. Paths are directly from the annotation.
-        processedDetailsList.push({
-            httpMethod: methodMappingInfo.httpMethod,
-            paths: methodMappingInfo.paths, // These are the raw paths from the annotation
+    return [
+        {
+            httpMethod: parsedAnnotation.httpMethod,
+            paths: parsedAnnotation.paths, // These are raw paths from annotation
             handlerMethodName: params.methodName,
             methodNameLine: params.methodNameStartLine,
             methodNameChar: params.methodNameStartChar,
             actualAnnotationGlobalStartLine: actualAnnotationGlobalStartLine,
-        });
-    }
-    return processedDetailsList;
+        }
+    ];
 }
 
 /**
@@ -465,67 +468,70 @@ function internalFindEndpointsInClassLogic(
     simpleDoc: SimpleTextDocumentData,
     simpleClassSymbol: SimpleDocumentSymbolData,
     basePath: string,
-    token: vscode.CancellationToken // Keep token for potential cancellation checks in future
+    token: ICancellationToken
 ): ExtendedProcessedMethodEndpoint[] {
-    const allClassEndpoints: ExtendedProcessedMethodEndpoint[] = [];
-    const potentialMethods = simpleClassSymbol.children.filter(symbol => symbol.kind === 5 /* Method */);
+    if (token.isCancellationRequested) {
+        return [];
+    }
+    const methodSymbols = simpleClassSymbol.children.filter(
+        (child) => child.kind === vscode.SymbolKind.Method || child.kind === vscode.SymbolKind.Function
+    );
+    let endpoints: ExtendedProcessedMethodEndpoint[] = [];
 
-    // Sort methods by start line (using simple data)
-    potentialMethods.sort((a, b) => a.range.start.line - b.range.start.line);
+    // Sort methods by start line to correctly determine annotation blocks
+    methodSymbols.sort((a, b) => a.range.start.line - b.range.start.line);
 
-    for (let i = 0; i < potentialMethods.length; i++) {
-        const methodSymbolData = potentialMethods[i];
+    for (let i = 0; i < methodSymbols.length; i++) {
+        const methodSymbolData = methodSymbols[i];
         if (token.isCancellationRequested) break;
 
-        const methodSelectionStart = methodSymbolData.selectionRange.start;
+        const methodName = methodSymbolData.name;
+        const selectionRange = methodSymbolData.selectionRange;
+        const methodBodyRange = methodSymbolData.range;
 
-        let annotationStartLine: number;
-        if (i > 0 && potentialMethods[i - 1]) {
-            annotationStartLine = potentialMethods[i - 1]!.range.end.line + 1;
+        let annotationBlockStartLine = 0;
+        if (i > 0) {
+            annotationBlockStartLine = methodSymbols[i - 1].range.end.line + 1;
         } else {
-            annotationStartLine = simpleClassSymbol.range.start.line + 1;
+            annotationBlockStartLine = simpleClassSymbol.range.start.line + 1;
         }
-        annotationStartLine = Math.min(annotationStartLine, methodSelectionStart.line);
-        const annotationEndLine = methodSelectionStart.line;
+        annotationBlockStartLine = Math.min(annotationBlockStartLine, methodBodyRange.start.line);
 
-        let methodAnnotationText = '';
-        if (annotationStartLine <= annotationEndLine) {
-            // Define range using simple types
-            const methodAnnotationRange: SimpleRange = {
-                start: { line: annotationStartLine, character: 0 },
-                end: { line: annotationEndLine + 1, character: 0 }
-            };
-            methodAnnotationText = simpleDoc.getText(methodAnnotationRange).trimEnd();
-        }
+        const methodAnnotationText = simpleDoc.getText({
+            start: { line: annotationBlockStartLine, character: 0 },
+            end: { line: methodBodyRange.start.line, character: 0 }
+        });
 
-        const processingParams: MethodProcessingParams = {
+        if (token.isCancellationRequested) break;
+
+        const processedAnnotations = processMethodAnnotationsAndCreateEndpoints({
             methodAnnotationText,
             basePath,
-            methodName: methodSymbolData.name,
-            methodNameStartLine: methodSelectionStart.line,
-            methodNameStartChar: methodSelectionStart.character,
-            annotationBlockStartLine: annotationStartLine,
-        };
+            methodName,
+            methodNameStartLine: selectionRange.start.line,
+            methodNameStartChar: selectionRange.start.character,
+            annotationBlockStartLine,
+        });
 
-        // processMethodAnnotationsAndCreateEndpoints is already pure and tested
-        const processedAnnotationDetailList = processMethodAnnotationsAndCreateEndpoints(processingParams);
-
-        for (const annDetail of processedAnnotationDetailList) {
-            for (const methodPath of annDetail.paths) { // Iterate through raw paths from the annotation
-                const fullPath = combinePaths(basePath, methodPath); // Combine with class base path
-                allClassEndpoints.push({
-                    method: annDetail.httpMethod,
-                    path: fullPath, // Use the combined path
-                    handlerMethodName: annDetail.handlerMethodName,
-                    methodNameLine: annDetail.methodNameLine,
-                    methodNameChar: annDetail.methodNameChar,
-                    actualAnnotationGlobalStartLine: annDetail.actualAnnotationGlobalStartLine,
-                    methodBodyEndLine: methodSymbolData.range.end.line, // From the current method's symbol
+        for (const pa of processedAnnotations) {
+            if (token.isCancellationRequested) break;
+            // Ensure paths are handled correctly (e.g. if multiple paths in annotation)
+            for (const rawPath of pa.paths) {
+                const combinedPath = combinePaths(basePath, rawPath);
+                endpoints.push({
+                    method: pa.httpMethod,
+                    path: combinedPath,
+                    handlerMethodName: pa.handlerMethodName,
+                    methodNameLine: pa.methodNameLine,
+                    methodNameChar: pa.methodNameChar,
+                    actualAnnotationGlobalStartLine: pa.actualAnnotationGlobalStartLine,
+                    methodBodyEndLine: methodBodyRange.end.line,
                 });
             }
         }
+        if (token.isCancellationRequested) break;
     }
-    return allClassEndpoints;
+    return endpoints;
 }
 
 /**
@@ -536,165 +542,188 @@ export async function findEndpointsInClass(
     document: vscode.TextDocument,
     classSymbol: vscode.DocumentSymbol,
     basePath: string,
-    token: vscode.CancellationToken
+    token: ICancellationToken
 ): Promise<EndpointInfo[]> {
-    // 1. Convert vscode types to simple data structures
-     const simpleDoc: SimpleTextDocumentData = {
-        uriFsPath: document.uri.fsPath,
-        getText: (range?: SimpleRange) => {
-            if (!range) return document.getText();
-            const vscodeRange = new vscode.Range(
-                new vscode.Position(range.start.line, range.start.character),
-                new vscode.Position(range.end.line, range.end.character)
-            );
-            return document.getText(vscodeRange);
-        }
-    };
-
-    function convertSingleSymbol(s: vscode.DocumentSymbol): SimpleDocumentSymbolData {
-        return {
-            name: s.name,
-            kind: s.kind,
-            range: {
-                start: { line: s.range.start.line, character: s.range.start.character },
-                end: { line: s.range.end.line, character: s.range.end.character }
-            },
-            selectionRange: {
-                start: { line: s.selectionRange.start.line, character: s.selectionRange.start.character },
-                end: { line: s.selectionRange.end.line, character: s.selectionRange.end.character }
-            },
-            children: (s.children || []).map(convertSingleSymbol) // Recursively convert children
-        };
+    console.log(`[Debug] findEndpointsInClass called for: ${classSymbol.name} with basePath: ${basePath}`); // DEBUG
+    const endpoints: EndpointInfo[] = [];
+    if (!classSymbol.children) {
+        console.log(`[Debug] Class ${classSymbol.name} has no children symbols.`); // DEBUG
+        return [];
     }
-    const simpleClassSymbol = convertSingleSymbol(classSymbol);
 
-    // 2. Call the internal logic function
-    const internalResult: ExtendedProcessedMethodEndpoint[] = internalFindEndpointsInClassLogic(simpleDoc, simpleClassSymbol, basePath, token);
-
-    // 3. Convert result back to EndpointInfo[] (requires vscode.Uri and vscode.Position)
-    const finalEndpoints: EndpointInfo[] = internalResult.map(extProcEp => ({
-        method: extProcEp.method,
-        path: extProcEp.path,
-        uri: document.uri, // Use original vscode.Uri
-        position: new vscode.Position(extProcEp.methodNameLine, extProcEp.methodNameChar), // Create vscode.Position for method name
-        handlerMethodName: extProcEp.handlerMethodName,
-        startLine: extProcEp.actualAnnotationGlobalStartLine, // NEW field
-        endLine: extProcEp.methodBodyEndLine,   // NEW field
-    }));
-
-    return finalEndpoints;
-}
-
-// --- VSCode Service Abstractions for Decoupling Unit Tests ---
-export interface VscodeDocumentProvider {
-    openTextDocument(uri: vscode.Uri): Promise<vscode.TextDocument | undefined>;
-}
-
-export interface VscodeSymbolProvider {
-    executeDocumentSymbolProvider(uri: vscode.Uri): Promise<vscode.DocumentSymbol[] | undefined>;
-}
-
-export interface VscodeFileSystemProvider { // New interface
-    findFiles(include: vscode.GlobPattern, exclude?: vscode.GlobPattern | null, maxResults?: number, token?: vscode.CancellationToken): Thenable<vscode.Uri[]>;
-}
-// --- End VSCode Service Abstractions ---
-
-/**
- * Processes a single Java file URI to find REST endpoints.
- *
- * @param uri The URI of the Java file.
- * @param token A cancellation token.
- * @returns A promise resolving to an array of EndpointInfo found in the file.
- */
-export async function processJavaFileForEndpoints(
-    uri: vscode.Uri,
-    token: vscode.CancellationToken,
-    documentProvider: VscodeDocumentProvider,
-    symbolProvider: VscodeSymbolProvider
-): Promise<EndpointInfo[]> {
-    let fileEndpoints: EndpointInfo[] = [];
-    try {
-        const document = await documentProvider.openTextDocument(uri);
-        if (!document) return [];
-
-        const symbols = await symbolProvider.executeDocumentSymbolProvider(uri);
-        if (!symbols) return [];
-
-        // Find controller classes and their base paths using the helper
-        const controllerClasses = await findControllerClasses(document, symbols);
-
-        // Iterate through the identified controller classes and find endpoints within each
-        for (const { classSymbol, basePath, isRestController } of controllerClasses) {
-             if (!isRestController || token.isCancellationRequested) continue;
-
-            // Find endpoints within this specific class using the helper
-            const classEndpoints = await findEndpointsInClass(document, classSymbol, basePath, token);
-            fileEndpoints = fileEndpoints.concat(classEndpoints);
-
-            if (token.isCancellationRequested) break; // Check cancellation after processing a class
-        }
-    } catch (error) {
-        console.error(`[processJavaFileForEndpoints] Error processing file ${uri.fsPath}:`, error);
-        // Optionally add user-facing error reporting here or re-throw
-    }
-    return fileEndpoints;
-}
-
-/**
- * Searches the workspace for potential Spring Boot REST endpoints using LSP symbols and text parsing.
- */
-export async function discoverEndpoints(
-    token: vscode.CancellationToken,
-    documentProvider?: VscodeDocumentProvider,
-    symbolProvider?: VscodeSymbolProvider,
-    fileSystemProvider?: VscodeFileSystemProvider,
-    // New parameter for injecting the processor function for testing
-    processFunc?: (uri: vscode.Uri, token: vscode.CancellationToken, docProvider: VscodeDocumentProvider, symProvider: VscodeSymbolProvider) => Promise<EndpointInfo[]>
-): Promise<EndpointInfo[]> {
-    let allEndpoints: EndpointInfo[] = [];
-
-    // Create default providers if not injected
-    const actualFileSystemProvider = fileSystemProvider || {
-        findFiles: (include, exclude, maxResults, token) => vscode.workspace.findFiles(include, exclude, maxResults, token)
-    };
-    const actualDocumentProvider = documentProvider || {
-        openTextDocument: async (uri: vscode.Uri): Promise<vscode.TextDocument | undefined> => {
-            try {
-                return await vscode.workspace.openTextDocument(uri);
-            } catch (e) {
-                console.error(`[discoverEndpoints] Error opening document ${uri.fsPath}:`, e);
-                return undefined;
-            }
-        }
-    };
-    const actualSymbolProvider = symbolProvider || {
-        executeDocumentSymbolProvider: async (uri: vscode.Uri): Promise<vscode.DocumentSymbol[] | undefined> => {
-            try {
-                return await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri);
-            } catch (e) {
-                console.error(`[discoverEndpoints] Error executing document symbol provider for ${uri.fsPath}:`, e);
-                return undefined;
-            }
-        }
-    };
-
-    const javaFiles = await actualFileSystemProvider.findFiles('**/*.java', '**/node_modules/**', undefined, token);
-
-    console.log(`[discoverEndpoints] Found ${javaFiles.length} Java files.`);
-
-    // Determine the actual processor function to use
-    const actualProcessJavaFileForEndpoints = processFunc || processJavaFileForEndpoints; // Default to the actual function
-
-    for (const uri of javaFiles) {
+    console.log(`[Debug] Iterating over ${classSymbol.children.length} children of ${classSymbol.name}`); // DEBUG
+    for (const methodSymbol of classSymbol.children) {
+        console.log(`[Debug] Checking child symbol: ${methodSymbol.name}, kind: ${methodSymbol.kind}`); // DEBUG
         if (token.isCancellationRequested) {
-            console.log('[discoverEndpoints] Cancellation requested.');
+            console.log(`[Debug] Cancellation requested during method iteration.`); // DEBUG
             break;
         }
-        // Pass the providers to the determined processor function
-        const fileEndpoints = await actualProcessJavaFileForEndpoints(uri, token, actualDocumentProvider, actualSymbolProvider);
-        allEndpoints = allEndpoints.concat(fileEndpoints);
-    }
+        // Only process methods/functions
+        if (methodSymbol.kind !== vscode.SymbolKind.Method && methodSymbol.kind !== vscode.SymbolKind.Function) {
+            console.log(`[Debug] Skipping non-method/function symbol: ${methodSymbol.name}`); // DEBUG
+            continue;
+        }
+        console.log(`[Debug] Processing method symbol: ${methodSymbol.name}`); // DEBUG
 
-    console.log(`[discoverEndpoints] Discovered ${allEndpoints.length} endpoints.`);
+        const methodStartLine = methodSymbol.range.start.line;
+        const lookAboveLines = 5;
+        const annotationScanStartLine = Math.max(0, methodStartLine - lookAboveLines);
+
+        const annotationRange = new vscode.Range(
+            new vscode.Position(annotationScanStartLine, 0),
+            methodSymbol.selectionRange.start
+        );
+        const methodAnnotationText = document.getText(annotationRange);
+        console.log(`[Debug] Extracted methodAnnotationText for ${methodSymbol.name} (lines ${annotationScanStartLine}-${methodSymbol.selectionRange.start.line}):\n${methodAnnotationText.substring(0, 300).replace(/\n/g, '\n')}...`); // DEBUG
+
+        const annotationBlockGlobalStartLine = annotationRange.start.line;
+
+        const params: MethodProcessingParams = {
+            methodAnnotationText,
+            basePath,
+            methodName: methodSymbol.name,
+            methodNameStartLine: methodSymbol.selectionRange.start.line,
+            methodNameStartChar: methodSymbol.selectionRange.start.character,
+            annotationBlockStartLine: annotationBlockGlobalStartLine
+        };
+
+        const processedAnnotations = processMethodAnnotationsAndCreateEndpoints(params);
+        console.log(`[Debug] processMethodAnnotationsAndCreateEndpoints returned for ${methodSymbol.name}:`, JSON.stringify(processedAnnotations)); // DEBUG
+
+        for (const processedInfo of processedAnnotations) {
+            if (token.isCancellationRequested) break;
+            for (const specificPath of processedInfo.paths) {
+                const combinedPath = combinePaths(basePath, specificPath);
+                console.log(`[Debug] Combined path for ${methodSymbol.name}: ${combinedPath} (base: ${basePath}, specific: ${specificPath})`); // DEBUG
+                endpoints.push({
+                    method: processedInfo.httpMethod,
+                    path: combinedPath,
+                    uri: toIUri(document.uri),
+                    position: toIPosition(new vscode.Position(processedInfo.methodNameLine, processedInfo.methodNameChar)),
+                    handlerMethodName: processedInfo.handlerMethodName,
+                    startLine: processedInfo.actualAnnotationGlobalStartLine,
+                    endLine: methodSymbol.range.end.line
+                });
+            }
+        }
+    }
+    console.log(`[Debug] findEndpointsInClass for ${classSymbol.name} returning ${endpoints.length} endpoints`); // DEBUG
+    return endpoints;
+}
+
+// VscodeDocumentProvider, VscodeSymbolProvider, VscodeFileSystemProvider need to use IUri and ICancellationToken
+export interface IDocumentProvider {
+    openTextDocument(uri: IUri): Promise<vscode.TextDocument | undefined>; // Takes IUri, returns vscode.TextDocument for now
+}
+
+export interface ISymbolProvider {
+    executeDocumentSymbolProvider(uri: IUri): Promise<vscode.DocumentSymbol[] | undefined>; // Takes IUri, returns vscode.DocumentSymbol[] for now
+}
+
+export interface IFileSystemProvider {
+    findFiles(include: string, exclude?: string | null, maxResults?: number, token?: ICancellationToken): Promise<IUri[]>; // Takes/returns IUri, ICancellationToken
+}
+
+export async function processJavaFileForEndpoints(
+    uri: IUri, // Changed to IUri
+    token: ICancellationToken, // Changed to ICancellationToken
+    documentProvider: IDocumentProvider,
+    symbolProvider: ISymbolProvider
+): Promise<EndpointInfo[]> {
+    // console.log(`[processJavaFileForEndpoints] Processing URI: ${uri.fsPath}`); // DEBUG
+
+    // 1. Open the text document using the document provider
+    const document = await documentProvider.openTextDocument(uri);
+    if (!document) {
+        // console.warn(`[processJavaFileForEndpoints] Could not open document: ${uri.fsPath}`);
+        return [];
+    }
+    if (token.isCancellationRequested) { return []; }
+
+    // 2. Get document symbols using the symbol provider
+    // Use the original IUri 'uri' that was passed in, as executeDocumentSymbolProvider expects an IUri.
+    // document.uri is a vscode.Uri.
+    const symbols = await symbolProvider.executeDocumentSymbolProvider(uri);
+    if (!symbols || symbols.length === 0) {
+        // console.warn(`[processJavaFileForEndpoints] No symbols found in document: ${uri.fsPath}`);
+        return [];
+    }
+    if (token.isCancellationRequested) { return []; }
+
+    // 3. Find potential controller classes from the symbols
+    // findControllerClasses expects a vscode.TextDocument and vscode.DocumentSymbol[]
+    const potentialControllers = await findControllerClasses(document, symbols);
+    if (potentialControllers.length === 0) {
+        // console.log(`[processJavaFileForEndpoints] No potential controller classes found in: ${uri.fsPath}`);
+        return [];
+    }
+    // console.log(`[processJavaFileForEndpoints] Found ${potentialControllers.length} potential controllers in ${uri.fsPath}.`);
+
+
+    // 4. For each potential controller, find its endpoints
+    const endpointsForFile: EndpointInfo[] = (await Promise.all(
+        potentialControllers.map(async (pController) => {
+            if (token.isCancellationRequested) { return []; }
+            // findEndpointsInClass expects a vscode.TextDocument, vscode.DocumentSymbol, and our ICancellationToken
+            return findEndpointsInClass(document, pController.classSymbol, pController.basePath, token);
+        })
+    )).flat();
+
+    // console.log(`[processJavaFileForEndpoints] Found ${endpointsForFile.length} endpoints in ${uri.fsPath}.`);
+    return endpointsForFile;
+}
+
+export async function discoverEndpoints(
+    token: ICancellationToken, // Changed to ICancellationToken
+    documentProvider?: IDocumentProvider,
+    symbolProvider?: ISymbolProvider,
+    fileSystemProvider?: IFileSystemProvider,
+    processFunc?: (
+        uri: IUri, // Changed to IUri
+        token: ICancellationToken, // Changed to ICancellationToken
+        docProvider: IDocumentProvider,
+        symProvider: ISymbolProvider
+    ) => Promise<EndpointInfo[]>
+): Promise<EndpointInfo[]> {
+    if (token.isCancellationRequested) return [];
+
+    const defaultDocProvider: IDocumentProvider = documentProvider || {
+        openTextDocument: async (iUriToOpen: IUri) => vscode.workspace.openTextDocument(fromIUri(iUriToOpen)) // Convert IUri to vscode.Uri
+    };
+    const defaultSymbolProvider: ISymbolProvider = symbolProvider || {
+        executeDocumentSymbolProvider: async (iUriToScan: IUri) => vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', fromIUri(iUriToScan)) // Convert IUri to vscode.Uri
+    };
+    const defaultFileSystemProvider: IFileSystemProvider = fileSystemProvider || {
+        findFiles: async (include: string, exclude?: string | null, maxResults?: number, findToken?: ICancellationToken) => {
+            const vscodeCancellationToken = findToken ? {
+                isCancellationRequested: findToken.isCancellationRequested, // Corrected property name
+                onCancellationRequested: findToken.onCancellationRequested
+                // Cast to vscode.CancellationToken as the structure matches
+            } as vscode.CancellationToken : undefined;
+            const vscodeUris = await vscode.workspace.findFiles(include, exclude, maxResults, vscodeCancellationToken);
+            return vscodeUris.map(toIUri); // Convert vscode.Uri[] to IUri[]
+        }
+    };
+    const processor = processFunc || processJavaFileForEndpoints;
+
+    let allEndpoints: EndpointInfo[] = [];
+    // findFiles now takes ICancellationToken and returns IUri[]
+    const javaFiles = await defaultFileSystemProvider.findFiles('**/*.java', '**/test/**', undefined, token);
+
+    if (token.isCancellationRequested) return [];
+
+    for (const fileIUri of javaFiles) { // Iterate over IUri
+        if (token.isCancellationRequested) {
+            console.log("[discoverEndpoints] Cancellation requested during file processing.");
+            break;
+        }
+        try {
+            // processor now takes IUri and ICancellationToken
+            const endpointsFromFile = await processor(fileIUri, token, defaultDocProvider, defaultSymbolProvider);
+            allEndpoints = allEndpoints.concat(endpointsFromFile);
+        } catch (error) {
+            console.error(`Error processing file ${fileIUri.fsPath}:`, error);
+        }
+    }
     return allEndpoints;
 }

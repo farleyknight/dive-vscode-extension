@@ -2,17 +2,19 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
 import { buildCallHierarchyTree, CustomHierarchyNode } from '../../src/call-hierarchy'; // Adjust path
+import { ICommandExecutor } from '../../src/adapters/vscodeExecution'; // Added
+import { VSCodeSymbolKind } from '../../src/adapters/vscodeTypes'; // Added
 
 // Helper to create a mock CallHierarchyItem
 const createMockCallHierarchyItem = (
     name: string,
-    kind: vscode.SymbolKind,
+    kind: VSCodeSymbolKind,
     uri: vscode.Uri,
     rangeLine: number, // Just line for simplicity in mock
     selRangeLine: number // Just line for simplicity in mock
 ): vscode.CallHierarchyItem => {
     return new vscode.CallHierarchyItem(
-        kind,
+        kind as number,
         name,
         `detail for ${name}`,
         uri,
@@ -33,7 +35,8 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
     let sandbox: sinon.SinonSandbox;
     let mockLogger: any;
     let mockToken: vscode.CancellationToken;
-    let executeCommandStub: sinon.SinonStub;
+    let mockCommandExecutor: ICommandExecutor;
+    let executeCommandStubOnMock: sinon.SinonStub;
     const fakeUri = vscode.Uri.file('/test/Controller.java');
 
     setup(() => {
@@ -47,21 +50,24 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
             onCancellationRequested: sandbox.stub().returns({ dispose: () => {} }),
         } as any;
 
-        executeCommandStub = sandbox.stub(vscode.commands, 'executeCommand');
+        executeCommandStubOnMock = sandbox.stub();
+        mockCommandExecutor = {
+            executeCommand: executeCommandStubOnMock
+        };
     });
 
     teardown(() => {
         sandbox.restore();
     });
 
-    const rootItem = createMockCallHierarchyItem('rootMethod', vscode.SymbolKind.Method, fakeUri, 10, 10);
+    const rootItem = createMockCallHierarchyItem('rootMethod', VSCodeSymbolKind.Method, fakeUri, 10, 10);
 
     test('should successfully build a root node if prepareCallHierarchy succeeds', async () => {
         const fakePosition = new vscode.Position(10, 1);
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([]); // No outgoing calls for this test
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([]); // No outgoing calls for this test
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.ok(result, 'Result should not be null');
         assert.strictEqual(result?.item, rootItem, 'Root node item should be the prepared item');
@@ -74,9 +80,9 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
 
     test('should return null if prepareCallHierarchy returns no items', async () => {
         const fakePosition = new vscode.Position(15, 10);
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([]);
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([]);
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.strictEqual(result, null);
         assert.ok(mockLogger.logUsage.calledWith('prepareInitialCallHierarchyItem', sinon.match({ status: 'no_items_returned' })));
@@ -86,9 +92,9 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
     test('should return null if prepareCallHierarchy throws an error', async () => {
         const fakePosition = new vscode.Position(15, 10);
         const prepareError = new Error('LSP prepare error');
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).rejects(prepareError);
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).rejects(prepareError);
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.strictEqual(result, null);
         assert.ok(mockLogger.logError.calledWith(prepareError, sinon.match({ stage: 'prepareInitialCallHierarchyItem' })));
@@ -99,28 +105,28 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
         const fakePosition = new vscode.Position(15, 10);
         mockToken.isCancellationRequested = true;
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.strictEqual(result, null);
-        assert.ok(executeCommandStub.withArgs('vscode.prepareCallHierarchy').notCalled, 'prepareCallHierarchy should not be called');
+        assert.ok(executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy').notCalled, 'prepareCallHierarchy should not be called');
         assert.ok(mockLogger.logUsage.calledWith('prepareInitialCallHierarchyItem', sinon.match({ status: 'cancelled_before_prepare' })));
         assert.ok(mockLogger.logUsage.calledWith('buildCallHierarchyTree', sinon.match({ status: 'cancelled_after_prepare' })));
     });
 
     test('should build one level of outgoing calls', async () => {
         const fakePosition = new vscode.Position(10, 1);
-        const child1Item = createMockCallHierarchyItem('child1Method', vscode.SymbolKind.Method, fakeUri, 20, 20);
-        const child2Item = createMockCallHierarchyItem('child2Method', vscode.SymbolKind.Method, fakeUri, 30, 30);
+        const child1Item = createMockCallHierarchyItem('child1Method', VSCodeSymbolKind.Method, fakeUri, 20, 20);
+        const child2Item = createMockCallHierarchyItem('child2Method', VSCodeSymbolKind.Method, fakeUri, 30, 30);
 
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([
             createMockOutgoingCall(child1Item),
             createMockOutgoingCall(child2Item)
         ]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', child1Item).resolves([]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', child2Item).resolves([]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', child1Item).resolves([]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', child2Item).resolves([]);
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.ok(result);
         assert.strictEqual(result?.children.length, 2);
@@ -134,21 +140,21 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
 
     test('should limit recursion to MAX_CALL_HIERARCHY_DEPTH (effective depth 5)', async () => {
         const fakePosition = new vscode.Position(10, 1);
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
 
         let currentItem = rootItem;
         // Create a chain such that level5 is the last one expanded (depth 4 call, leads to depth 5 node which doesn't expand)
         // MAX_DEPTH is 5. Root (depth 0) -> L1 (d1) -> L2 (d2) -> L3 (d3) -> L4 (d4) -> L5 (d5, doesn't expand children)
         for (let i = 0; i < 5; i++) { // Create L1, L2, L3, L4, L5
-            const nextItem = createMockCallHierarchyItem(`level${i + 1}`, vscode.SymbolKind.Method, fakeUri, 100 + i * 10, 100 + i * 10);
-            executeCommandStub.withArgs('vscode.provideOutgoingCalls', currentItem).resolves([createMockOutgoingCall(nextItem)]);
+            const nextItem = createMockCallHierarchyItem(`level${i + 1}`, VSCodeSymbolKind.Method, fakeUri, 100 + i * 10, 100 + i * 10);
+            executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', currentItem).resolves([createMockOutgoingCall(nextItem)]);
             currentItem = nextItem;
         }
         // level5 should not fetch its children (level6)
-        const level6Item = createMockCallHierarchyItem('level6_not_fetched', vscode.SymbolKind.Method, fakeUri, 200, 200);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', currentItem).resolves([createMockOutgoingCall(level6Item)]); // This is for level5 item
+        const level6Item = createMockCallHierarchyItem('level6_not_fetched', VSCodeSymbolKind.Method, fakeUri, 200, 200);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', currentItem).resolves([createMockOutgoingCall(level6Item)]); // This is for level5 item
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.ok(result);
         let node = result;
@@ -168,15 +174,15 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
 
     test('should handle circular dependencies by not adding cyclic child', async () => {
         const fakePosition = new vscode.Position(10, 1);
-        const itemA = createMockCallHierarchyItem('methodA', vscode.SymbolKind.Method, fakeUri, 20, 20);
-        const itemB = createMockCallHierarchyItem('methodB', vscode.SymbolKind.Method, fakeUri, 30, 30);
+        const itemA = createMockCallHierarchyItem('methodA', VSCodeSymbolKind.Method, fakeUri, 20, 20);
+        const itemB = createMockCallHierarchyItem('methodB', VSCodeSymbolKind.Method, fakeUri, 30, 30);
 
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([createMockOutgoingCall(itemA)]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', itemA).resolves([createMockOutgoingCall(itemB)]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', itemB).resolves([createMockOutgoingCall(itemA)]); // B calls A (cycle)
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([createMockOutgoingCall(itemA)]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', itemA).resolves([createMockOutgoingCall(itemB)]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', itemB).resolves([createMockOutgoingCall(itemA)]); // B calls A (cycle)
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.ok(result);
         assert.strictEqual(result?.children.length, 1, 'Root should have one child (A)');
@@ -197,25 +203,25 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
 
     test('should stop expansion if cancellation is requested during recursion', async () => {
         const fakePosition = new vscode.Position(10, 1);
-        const child1 = createMockCallHierarchyItem('child1', vscode.SymbolKind.Method, fakeUri, 20, 20);
-        const child2 = createMockCallHierarchyItem('child2_not_expanded', vscode.SymbolKind.Method, fakeUri, 30, 30);
+        const child1 = createMockCallHierarchyItem('child1', VSCodeSymbolKind.Method, fakeUri, 20, 20);
+        const child2 = createMockCallHierarchyItem('child2_not_expanded', VSCodeSymbolKind.Method, fakeUri, 30, 30);
 
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
 
         // Root provides child1
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([createMockOutgoingCall(child1)]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([createMockOutgoingCall(child1)]);
 
         // When child1's outgoing calls are fetched, set cancellation
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', child1)
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', child1)
             .callsFake(async () => {
                 mockToken.isCancellationRequested = true;
                 return [createMockOutgoingCall(child2)]; // child1 would call child2
             });
 
         // child2 should never have its calls fetched
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', child2).resolves([]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', child2).resolves([]);
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.ok(result, 'Result should exist');
         assert.strictEqual(result?.children.length, 1, 'Root should have child1');
@@ -233,19 +239,19 @@ suite('Call Hierarchy Utility - buildCallHierarchyTree', () => {
 
     test('should handle error during provideOutgoingCalls in recursion', async () => {
         const fakePosition = new vscode.Position(10, 1);
-        const childWithError = createMockCallHierarchyItem('childWithError', vscode.SymbolKind.Method, fakeUri, 20, 20);
-        const healthyChild = createMockCallHierarchyItem('healthyChild', vscode.SymbolKind.Method, fakeUri, 30, 30);
+        const childWithError = createMockCallHierarchyItem('childWithError', VSCodeSymbolKind.Method, fakeUri, 20, 20);
+        const healthyChild = createMockCallHierarchyItem('healthyChild', VSCodeSymbolKind.Method, fakeUri, 30, 30);
         const fetchError = new Error('LSP error providing outgoing calls');
 
-        executeCommandStub.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([
+        executeCommandStubOnMock.withArgs('vscode.prepareCallHierarchy', fakeUri, fakePosition).resolves([rootItem]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', rootItem).resolves([
             createMockOutgoingCall(childWithError),
             createMockOutgoingCall(healthyChild)
         ]);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', childWithError).rejects(fetchError);
-        executeCommandStub.withArgs('vscode.provideOutgoingCalls', healthyChild).resolves([]);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', childWithError).rejects(fetchError);
+        executeCommandStubOnMock.withArgs('vscode.provideOutgoingCalls', healthyChild).resolves([]);
 
-        const result = await buildCallHierarchyTree(fakeUri, fakePosition, mockLogger, mockToken);
+        const result = await buildCallHierarchyTree(mockCommandExecutor, fakeUri, fakePosition, mockLogger, mockToken);
 
         assert.ok(result);
         assert.strictEqual(result?.children.length, 2);

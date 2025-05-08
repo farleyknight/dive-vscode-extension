@@ -98,8 +98,8 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         await handleRestEndpoint(params, 'show test endpoint');
         assert.ok((endpointDiscovery.discoverEndpoints as sinon.SinonStub).calledOnce, 'discoverEndpoints should be called');
         assert.ok(buildCallHierarchyTreeStub.notCalled, 'buildCallHierarchyTree should not be called if no endpoints');
-        assert.ok(mockStream.markdown.calledWith(sinon.match(/couldn't find any REST endpoints/)), 'No endpoints message should be streamed');
-        assert.ok(mockLogger.logUsage.calledWith('request', sinon.match.has('status', 'no_endpoints_found')), 'logUsage should indicate no_endpoints_found');
+        assert.ok(mockStream.markdown.calledWith('No REST endpoints found in the current workspace. Ensure your project uses common annotations like @RestController, @GetMapping, etc.'), 'No endpoints message should be streamed');
+        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] discoverEndpoints', sinon.match({ status: 'no_endpoints_found' })), 'logUsage should indicate no_endpoints_found');
     });
 
     test('should handle disambiguation failure', async () => {
@@ -112,7 +112,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         await handleRestEndpoint(params, 'show a very ambiguous endpoint');
         assert.ok((endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).calledOnce, 'disambiguateEndpoint should be called');
         assert.ok(buildCallHierarchyTreeStub.notCalled, 'buildCallHierarchyTree should not be called if disambiguation fails');
-        assert.ok(mockLogger.logUsage.calledWith('request', sinon.match.has('status', 'disambiguation_failed')), 'logUsage should indicate disambiguation_failed');
+        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] disambiguateEndpoint', sinon.match({ status: 'no_target_endpoint' })), 'logUsage should indicate no_target_endpoint');
     });
 
     // New tests for handleRestEndpoint's interaction with buildCallHierarchyTree
@@ -126,7 +126,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
 
         (endpointDiscovery.discoverEndpoints as sinon.SinonStub).resolves([targetEndpoint]);
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(targetEndpoint);
-        buildCallHierarchyTreeStub.withArgs(fakeUri, fakePosition, sinon.match.any, sinon.match.any).resolves(mockHierarchyRoot);
+        buildCallHierarchyTreeStub.withArgs(sinon.match.any, fakeUri, fakePosition, sinon.match.any, sinon.match.any).resolves(mockHierarchyRoot);
         generateMermaidSequenceDiagramStub.withArgs(mockHierarchyRoot).returns(fakeMermaidSyntax);
 
         // We need to ensure that the local validateMermaidSyntax function within diagramParticipant.ts would return true.
@@ -136,9 +136,9 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
-        assert.ok(buildCallHierarchyTreeStub.calledOnceWith(fakeUri, fakePosition, mockLogger, mockToken), 'buildCallHierarchyTree should be called with correct args');
+        assert.ok(buildCallHierarchyTreeStub.calledOnceWith(sinon.match.any, fakeUri, fakePosition, mockLogger, mockToken), 'buildCallHierarchyTree should be called with correct args');
         assert.ok(generateMermaidSequenceDiagramStub.calledOnceWith(mockHierarchyRoot), 'generateMermaidSequenceDiagramStub should be called with the hierarchy root');
-        assert.ok(mockLogger.logUsage.calledWith('request', sinon.match.has('status', 'call_hierarchy_data_built')), 'Log should indicate data_built status');
+        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] buildCallHierarchyTree', sinon.match({ status: 'success' })), 'Log should indicate buildCallHierarchyTree success status');
         assert.ok(mockStream.progress.calledWith('Generating sequence diagram...'), 'Progress should indicate diagram generation');
 
         // Check that createWebviewPanel was called, which implies createAndShowDiagramWebview was invoked and validation (implicitly) passed.
@@ -146,7 +146,7 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         // Verify some key parameters passed to createWebviewPanel if needed
         const panelArgs = createWebviewPanelStub.firstCall.args;
         assert.strictEqual(panelArgs[0], 'restEndpointSequenceDiagram', 'Panel ID is incorrect');
-        assert.strictEqual(panelArgs[1], 'Call Sequence: GET _api_data', 'Panel title is incorrect');
+        assert.strictEqual(panelArgs[1], 'Sequence: GET /api/data', 'Panel title is incorrect');
 
         // Ensure no old success markdown message is sent
         assert.ok(mockStream.markdown.neverCalledWith(sinon.match(/Successfully built call hierarchy for getData/)), 'Old success markdown should not be called');
@@ -165,8 +165,8 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnce, 'buildCallHierarchyTree should be called');
-        assert.ok(mockStream.markdown.calledWith(sinon.match(/Could not build call hierarchy data/)), 'Markdown should report failure');
-        assert.ok(mockLogger.logUsage.calledWith('request', sinon.match.has('status', 'call_hierarchy_data_build_failed')), 'Log should indicate build_failed status');
+        assert.ok(mockStream.markdown.calledWith('Could not build the call hierarchy for the selected endpoint. The endpoint might not have any outgoing calls or there might have been an issue processing it.'), 'Markdown should report failure');
+        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] buildCallHierarchyTree', sinon.match({ status: 'no_root' })), 'Log should indicate no_root status');
     });
 
     // Cancellation test (optional, but good if your buildCallHierarchyTree handles cancellation actively)
@@ -179,25 +179,16 @@ suite('Diagram Participant - handleRestEndpoint', () => {
         (endpointDisambiguation.disambiguateEndpoint as sinon.SinonStub).resolves(targetEndpoint);
 
         // Simulate cancellation *after* buildCallHierarchyTree is called but *before* it would resolve
-        buildCallHierarchyTreeStub.callsFake(async (uri, position, logger, tokenArg) => {
+        buildCallHierarchyTreeStub.callsFake(async (commandExecutor: any, uri: any, position: any, logger: any, tokenArg: any) => {
             tokenArg.isCancellationRequested = true; // Simulate cancellation
-            // The actual buildCallHierarchyTree function in call-hierarchy.ts will check this token.
-            // For this test, we ensure it's set, and the main function handles it.
-            return null; // or a specific response if cancellation has one
+            return null;
         });
 
         const params = { request: mockRequest, context: mockContext, stream: mockStream, token: mockToken, extensionContext: mockExtensionContext, logger: mockLogger, codeContext: '', lmAdapter: mockLmAdapter };
         await handleRestEndpoint(params, 'get data endpoint');
 
         assert.ok(buildCallHierarchyTreeStub.calledOnce, 'buildCallHierarchyTree should be called');
-        // The 'cancelled_during_hierarchy_build' log is now made in handleRestEndpoint after buildCallHierarchyTree returns (or is awaited)
-        // if the token passed to buildCallHierarchyTree leads to it returning null due to cancellation.
-        // We need to ensure the token state is checked by handleRestEndpoint *after* the call to buildCallHierarchyTree
-        // For this test, we assume the token.isCancellationRequested = true set in the fake will be checked by handleRestEndpoint after the await.
-        // The test setup here is a bit tricky because the cancellation happens *inside* the mocked function's execution period.
-        // The direct check here will be on handleRestEndpoint's logging AFTER buildCallHierarchyTree completes.
-        // A more robust test of buildCallHierarchyTree's internal cancellation is in call-hierarchy.test.ts
-        assert.ok(mockLogger.logUsage.calledWith('request', sinon.match.has('status', 'cancelled_during_hierarchy_build')), 'Log should indicate cancellation during build');
+        assert.ok(mockLogger.logUsage.calledWith('[handleRestEndpoint] buildCallHierarchyTree', sinon.match({ status: 'cancelled' })), 'Log should indicate cancellation during build');
     });
 
 });

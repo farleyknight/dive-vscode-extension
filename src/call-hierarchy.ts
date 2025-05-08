@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path'; // For logging, if needed
+import { ICommandExecutor } from './adapters/vscodeExecution';
 
 // Define our custom node structure for the call hierarchy
 export interface CustomHierarchyNode {
@@ -24,6 +25,7 @@ function getCallHierarchyItemUniqueId(item: vscode.CallHierarchyItem): string {
  * This is the first step before fetching incoming/outgoing calls.
  */
 async function prepareInitialCallHierarchyItem(
+    commandExecutor: ICommandExecutor,
     uri: vscode.Uri,
     position: vscode.Position,
     token: vscode.CancellationToken,
@@ -34,7 +36,7 @@ async function prepareInitialCallHierarchyItem(
         return null;
     }
     try {
-        const initialItems = await vscode.commands.executeCommand<vscode.CallHierarchyItem[]>(
+        const initialItems = await commandExecutor.executeCommand<vscode.CallHierarchyItem[]>(
             'vscode.prepareCallHierarchy',
             uri,
             position
@@ -55,6 +57,7 @@ async function prepareInitialCallHierarchyItem(
 }
 
 async function fetchOutgoingCalls(
+    commandExecutor: ICommandExecutor,
     item: vscode.CallHierarchyItem,
     token: vscode.CancellationToken,
     logger: vscode.TelemetryLogger
@@ -64,7 +67,7 @@ async function fetchOutgoingCalls(
         return [];
     }
     try {
-        const outgoingCalls = await vscode.commands.executeCommand<vscode.CallHierarchyOutgoingCall[]>(
+        const outgoingCalls = await commandExecutor.executeCommand<vscode.CallHierarchyOutgoingCall[]>(
             'vscode.provideOutgoingCalls',
             item
         );
@@ -80,6 +83,7 @@ async function fetchOutgoingCalls(
 
 // Recursive helper to expand outgoing calls
 async function expandOutgoingCallsRecursive(
+    commandExecutor: ICommandExecutor,
     currentNode: CustomHierarchyNode,
     depth: number,
     visitedIds: Set<string>,
@@ -106,7 +110,7 @@ async function expandOutgoingCallsRecursive(
         return;
     }
 
-    const outgoingCalls = await fetchOutgoingCalls(currentNode.item, token, logger);
+    const outgoingCalls = await fetchOutgoingCalls(commandExecutor, currentNode.item, token, logger);
 
     // If cancellation happened during fetchOutgoingCalls, the token will be set
     if (token.isCancellationRequested) {
@@ -136,7 +140,7 @@ async function expandOutgoingCallsRecursive(
             parents: [currentNode], // Simple parent tracking
         };
         currentNode.children.push(childNode);
-        await expandOutgoingCallsRecursive(childNode, depth + 1, visitedIds, token, logger);
+        await expandOutgoingCallsRecursive(commandExecutor, childNode, depth + 1, visitedIds, token, logger);
 
         // If recursion for a child was cancelled, the main token might be set.
         // Stop processing further siblings if global cancellation is triggered.
@@ -154,6 +158,7 @@ async function expandOutgoingCallsRecursive(
  * (Currently a stub that only prepares the root item)
  */
 export async function buildCallHierarchyTree(
+    commandExecutor: ICommandExecutor,
     uri: vscode.Uri,
     position: vscode.Position,
     logger: vscode.TelemetryLogger,
@@ -161,7 +166,7 @@ export async function buildCallHierarchyTree(
 ): Promise<CustomHierarchyNode | null> {
     logger.logUsage('buildCallHierarchyTree', { status: 'started' });
 
-    const initialItem = await prepareInitialCallHierarchyItem(uri, position, token, logger);
+    const initialItem = await prepareInitialCallHierarchyItem(commandExecutor, uri, position, token, logger);
 
     if (token.isCancellationRequested) {
         logger.logUsage('buildCallHierarchyTree', { status: 'cancelled_after_prepare' });
@@ -180,7 +185,7 @@ export async function buildCallHierarchyTree(
     };
 
     const visitedIdsOnPath = new Set<string>();
-    await expandOutgoingCallsRecursive(rootNode, 0, visitedIdsOnPath, token, logger);
+    await expandOutgoingCallsRecursive(commandExecutor, rootNode, 0, visitedIdsOnPath, token, logger);
 
     if (token.isCancellationRequested && rootNode.children.length === 0) { // More precise cancellation check
         // If cancelled very early in expansion, or if prepare was successful but expansion yielded nothing due to cancellation

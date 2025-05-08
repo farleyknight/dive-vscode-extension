@@ -8,21 +8,6 @@ This file provides a high-level overview of the current development focus.
 
 *   **Problem:** Direct usage of the `vscode` module in unit tests (files in `test/suite/*.test.ts`, excluding `test/suite/e2e/**`) leads to brittle tests that are hard to write and maintain. This is because they become dependent on the complex VS Code API surface, requiring intricate mocking.
 *   **Objective:** Refactor unit tests to eliminate direct dependencies on the `vscode` module. This involves introducing abstraction layers (interfaces, wrapper functions) for any VS Code services needed by core logic. Unit tests will then mock these custom abstractions, not `vscode` objects directly. This aligns with the principle outlined in `docs/mistakes.md#1-using-vscode-module-directly-in-unit-tests-for-core-logic`.
-*   **Implementation Approach:**
-    1.  **Identify `vscode` API Usage:** Systematically review the unit tests within the defined scope to pinpoint all direct interactions with the `vscode` module.
-    2.  **Define Abstraction Layers:** For each identified `vscode` service or functionality, create custom interfaces or wrapper functions/classes. These abstractions will define the precise methods and properties required by the core logic, without directly exposing `vscode` types.
-    3.  **Implement Concrete Wrappers (Runtime):** Develop concrete implementations of these new abstractions. These implementations will be responsible for interacting with the actual `vscode` module, effectively translating calls from the abstraction layer to the underlying `vscode` API. These wrappers are used when the extension operates within the VS Code environment.
-    4.  **Refactor Core Logic:** Modify the core application logic (the code under test) to depend on the newly defined custom abstractions instead of directly calling `vscode` APIs.
-    5.  **Mock Abstractions in Unit Tests:** Update the unit tests to mock the custom abstraction layers. Since these abstractions are defined and controlled within the project, creating and managing mocks for them will be significantly simpler and more stable compared to mocking the extensive and potentially internal `vscode` object model.
-
-    *   **Illustrative Example: Abstracting `vscode.LanguageModelChat`**
-        *   This ongoing effort (detailed further in the "Abstracting `vscode.LanguageModelChat` for Testability and Flexibility" section) serves as a practical example of this approach.
-        *   **Problem Context:** Direct use of `vscode.LanguageModelChat` in `disambiguateEndpoint` caused difficulties in E2E tests, particularly with `instanceof vscode.LanguageModelTextPart` checks.
-        *   **Abstraction Steps:**
-            1.  **Define `ILanguageModelAdapter`:** An interface specifying a `sendRequest` method that returns promises of simplified, plain JavaScript objects (not `vscode` types).
-            2.  **Implement `VscodeLanguageModelAdapter`:** A class implementing `ILanguageModelAdapter`, wrapping a real `vscode.LanguageModelChat`. Its `sendRequest` method calls the actual VS Code API and *transforms* the response objects into the plain JavaScript objects defined by the interface.
-            3.  **Refactor `disambiguateEndpoint`:** Modify it to accept an `ILanguageModelAdapter` and work with the plain JavaScript objects.
-            4.  **Update E2E Test:** The test provides a test-specific implementation of `ILanguageModelAdapter` that directly yields the plain JavaScript objects, bypassing `instanceof` issues and giving full control over the test data.
 *   **Scope:**
     *   `test/suite/call-hierarchy.test.ts`
     *   `test/suite/extension.test.ts`
@@ -30,6 +15,23 @@ This file provides a high-level overview of the current development focus.
     *   `test/suite/diagramParticipant.test.ts`
     *   `test/suite/endpoint-disambiguation.test.ts`
 *   **Expected Outcome:** Unit tests will be more robust, easier to understand, and faster to run, focusing purely on validating the intended logic in isolation.
+
+*   **Detailed Implementation Strategy:**
+    *   **Iterative Approach:** This refactoring will be performed incrementally, one `vscode` API usage at a time, across the specified test files. The goal is to ensure the test suite (`npm test` or `npm run test`) passes after each individual change.
+    *   **Process for Each `vscode` API Usage:**
+        1.  **Identify:** Within one of the target test files (from the "Scope" list), identify a specific direct usage of a `vscode` API (e.g., `vscode.Uri`, `vscode.window.showQuickPick`, `vscode.commands.executeCommand`, `vscode.workspace.workspaceFolders`). Since many files use `import * as vscode from 'vscode'`, this will involve inspecting how the `vscode` namespace object is used.
+        2.  **Abstract:** Define a new interface or wrapper function/class (e.g., `IVscodeWindow`, `executeVscodeCommand`, `getWorkspaceFolders`) in a suitable shared location (e.g., `src/adapters/vscode.ts` or similar). This abstraction will define the minimal signature needed by the consuming code.
+        3.  **Implement:** Create a concrete implementation of this abstraction that calls the actual `vscode` API. This will reside in the production codebase.
+        4.  **Refactor Core Logic (If Necessary):** Update the core application logic that was using the `vscode` API directly to now depend on the new abstraction (using dependency injection or by directly calling the wrapper function).
+        5.  **Refactor Test:** Modify the unit test to:
+            *   Import and use the new abstraction.
+            *   Mock the abstraction. Provide a test-specific implementation or use a mocking library (e.g., Sinon.JS stubs) to control its behavior for the test scenario.
+        6.  **Test:** Run the relevant unit tests and the full test suite (`npm test` or `npm run test`).
+        7.  **Verify & Iterate:**
+            *   If tests pass, commit the changes. Proceed to the next identified `vscode` API usage in the same file or a new file from the scope.
+            *   If tests fail, debug and fix the implementation or the test setup until all tests pass. Then, commit and proceed.
+    *   **File-by-File Focus:** It's recommended to tackle one test file at a time. Before starting on a file, it may be beneficial to list out all direct `vscode` API usages within that file to plan the sequence of abstractions.
+    *   **The `vscode.LanguageModelChat` Abstraction:** The plan outlined in "**Abstracting `vscode.LanguageModelChat` for Testability and Flexibility**" serves as a good example of this process for a specific, complex `vscode` API. Similar principles will be applied to other `vscode` API usages.
 
 ---
 
